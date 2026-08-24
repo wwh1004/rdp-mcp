@@ -60,7 +60,9 @@ class McpStdioClient:
         for line in self.process.stderr:
             line = line.rstrip()
             self._stderr.append(line)
-            print(f"[server] {line}", file=sys.stderr)
+            # Keep native FreeRDP diagnostics visible as they happen even when
+            # the example's stderr is redirected or attached to a non-TTY.
+            print(f"[server] {line}", file=sys.stderr, flush=True)
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         self._write({"jsonrpc": "2.0", "method": method, "params": params or {}})
