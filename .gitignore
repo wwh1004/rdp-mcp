@@ -1,0 +1,15 @@
+/build/
+/dist/
+/target/
+
+*.dll
+*.exe
+*.lib
+*.o
+*.obj
+*.pdb
+*.so
+
+__pycache__/
+*.py[cod]
+.venv/
