@@ -73,26 +73,65 @@ else()
         pkg_check_modules(WINPR REQUIRED winpr0)
     endif()
 
-    target_include_directories(rdp_mcp_native PRIVATE
-        ${FREERDP_INCLUDE_DIRS}
-        ${FREERDP_CLIENT_INCLUDE_DIRS}
-        ${WINPR_INCLUDE_DIRS}
-    )
-    target_link_directories(rdp_mcp_native PUBLIC
-        ${FREERDP_LIBRARY_DIRS}
-        ${FREERDP_CLIENT_LIBRARY_DIRS}
-        ${WINPR_LIBRARY_DIRS}
-    )
-    target_link_libraries(rdp_mcp_native PUBLIC
-        ${FREERDP_CLIENT_LIBRARIES}
-        ${FREERDP_LIBRARIES}
-        ${WINPR_LIBRARIES}
-    )
-    target_compile_options(rdp_mcp_native PRIVATE
-        ${FREERDP_CFLAGS_OTHER}
-        ${FREERDP_CLIENT_CFLAGS_OTHER}
-        ${WINPR_CFLAGS_OTHER}
-    )
+    if(RDP_MCP_STATIC_DEPS)
+        set(RDP_MCP_FREERDP_INCLUDE_DIRS
+            ${FREERDP_STATIC_INCLUDE_DIRS}
+            ${FREERDP_CLIENT_STATIC_INCLUDE_DIRS}
+            ${WINPR_STATIC_INCLUDE_DIRS}
+        )
+        set(RDP_MCP_FREERDP_LIBRARY_DIRS
+            ${FREERDP_STATIC_LIBRARY_DIRS}
+            ${FREERDP_CLIENT_STATIC_LIBRARY_DIRS}
+            ${WINPR_STATIC_LIBRARY_DIRS}
+        )
+        set(RDP_MCP_FREERDP_LIBRARIES
+            ${FREERDP_CLIENT_STATIC_LIBRARIES}
+            ${FREERDP_STATIC_LIBRARIES}
+            ${WINPR_STATIC_LIBRARIES}
+        )
+        set(RDP_MCP_FREERDP_CFLAGS
+            ${FREERDP_STATIC_CFLAGS_OTHER}
+            ${FREERDP_CLIENT_STATIC_CFLAGS_OTHER}
+            ${WINPR_STATIC_CFLAGS_OTHER}
+        )
+        set(RDP_MCP_FREERDP_LDFLAGS
+            ${FREERDP_STATIC_LDFLAGS_OTHER}
+            ${FREERDP_CLIENT_STATIC_LDFLAGS_OTHER}
+            ${WINPR_STATIC_LDFLAGS_OTHER}
+        )
+    else()
+        set(RDP_MCP_FREERDP_INCLUDE_DIRS
+            ${FREERDP_INCLUDE_DIRS}
+            ${FREERDP_CLIENT_INCLUDE_DIRS}
+            ${WINPR_INCLUDE_DIRS}
+        )
+        set(RDP_MCP_FREERDP_LIBRARY_DIRS
+            ${FREERDP_LIBRARY_DIRS}
+            ${FREERDP_CLIENT_LIBRARY_DIRS}
+            ${WINPR_LIBRARY_DIRS}
+        )
+        set(RDP_MCP_FREERDP_LIBRARIES
+            ${FREERDP_CLIENT_LIBRARIES}
+            ${FREERDP_LIBRARIES}
+            ${WINPR_LIBRARIES}
+        )
+        set(RDP_MCP_FREERDP_CFLAGS
+            ${FREERDP_CFLAGS_OTHER}
+            ${FREERDP_CLIENT_CFLAGS_OTHER}
+            ${WINPR_CFLAGS_OTHER}
+        )
+        set(RDP_MCP_FREERDP_LDFLAGS
+            ${FREERDP_LDFLAGS_OTHER}
+            ${FREERDP_CLIENT_LDFLAGS_OTHER}
+            ${WINPR_LDFLAGS_OTHER}
+        )
+    endif()
+
+    target_include_directories(rdp_mcp_native PRIVATE ${RDP_MCP_FREERDP_INCLUDE_DIRS})
+    target_link_directories(rdp_mcp_native PUBLIC ${RDP_MCP_FREERDP_LIBRARY_DIRS})
+    target_link_libraries(rdp_mcp_native PUBLIC ${RDP_MCP_FREERDP_LIBRARIES})
+    target_compile_options(rdp_mcp_native PRIVATE ${RDP_MCP_FREERDP_CFLAGS})
+    target_link_options(rdp_mcp_native PUBLIC ${RDP_MCP_FREERDP_LDFLAGS})
 endif()
 
 if(MSVC)
