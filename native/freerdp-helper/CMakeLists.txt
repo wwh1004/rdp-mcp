@@ -56,7 +56,8 @@ if(WIN32)
 
     if(MINGW AND RDP_MCP_STATIC_DEPS)
         # FreeRDP's installed API header otherwise annotates static calls as dllimport.
-        target_compile_definitions(rdp_mcp_native PRIVATE FREERDP_EXPORTS)
+        # cJSON is private implementation detail and must not add PE exports.
+        target_compile_definitions(rdp_mcp_native PRIVATE FREERDP_EXPORTS CJSON_HIDE_SYMBOLS)
     endif()
 else()
     find_package(PkgConfig REQUIRED)
@@ -141,6 +142,7 @@ else()
         -Os
         -ffunction-sections
         -fdata-sections
+        -fno-ident
         -Wall
         -Wextra
         -Wno-unused-parameter
@@ -164,6 +166,15 @@ if(RDP_MCP_RUST_STATICLIB)
     add_executable(rdp-mcp src/launcher.c)
     target_link_libraries(rdp-mcp PRIVATE rdp_mcp_rust rdp_mcp_native)
 
+    if(NOT MSVC)
+        target_compile_options(rdp-mcp PRIVATE
+            -Os
+            -ffunction-sections
+            -fdata-sections
+            -fno-ident
+        )
+    endif()
+
     if(WIN32)
         target_link_libraries(rdp-mcp PRIVATE
             bcrypt
@@ -181,10 +192,15 @@ if(RDP_MCP_RUST_STATICLIB)
             -static
             -static-libgcc
             -Wl,--gc-sections
+            -Wl,--exclude-all-symbols
+            -Wl,--exclude-libs,ALL
+            -Wl,--no-insert-timestamp
             -Wl,--strip-all
         )
     elseif(NOT MSVC)
         target_link_options(rdp-mcp PRIVATE
+            -Wl,--as-needed
+            -Wl,--build-id=none
             -Wl,--gc-sections
             -Wl,--strip-all
         )

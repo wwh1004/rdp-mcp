@@ -16,7 +16,7 @@ index 9876361..0000000
 -bundle/windows/
 -bundle/linux/
 diff --git a/freerdp-helper/CMakeLists.txt b/freerdp-helper/CMakeLists.txt
-index ff76d1f..88fc17d 100644
+index ff76d1f..81b8cd3 100644
 --- a/freerdp-helper/CMakeLists.txt
 +++ b/freerdp-helper/CMakeLists.txt
 @@ -1,10 +1,15 @@
@@ -74,7 +74,7 @@ index ff76d1f..88fc17d 100644
          freerdp
          freerdp-client
          winpr
-@@ -41,29 +49,17 @@ if(WIN32)
+@@ -41,29 +49,18 @@ if(WIN32)
          ole32
          shell32
      )
@@ -102,7 +102,8 @@ index ff76d1f..88fc17d 100644
 -        message(WARNING "Local deps not found at ${DEPS_PREFIX} - run build-freerdp.sh first")
 +    if(MINGW AND RDP_MCP_STATIC_DEPS)
 +        # FreeRDP's installed API header otherwise annotates static calls as dllimport.
-+        target_compile_definitions(rdp_mcp_native PRIVATE FREERDP_EXPORTS)
++        # cJSON is private implementation detail and must not add PE exports.
++        target_compile_definitions(rdp_mcp_native PRIVATE FREERDP_EXPORTS CJSON_HIDE_SYMBOLS)
      endif()
 -
 +else()
@@ -112,7 +113,7 @@ index ff76d1f..88fc17d 100644
      pkg_check_modules(FREERDP freerdp3)
      if(NOT FREERDP_FOUND)
          pkg_check_modules(FREERDP REQUIRED freerdp0)
-@@ -77,24 +73,122 @@ else()
+@@ -77,24 +74,137 @@ else()
          pkg_check_modules(WINPR REQUIRED winpr0)
      endif()
  
@@ -194,6 +195,7 @@ index ff76d1f..88fc17d 100644
 +        -Os
 +        -ffunction-sections
 +        -fdata-sections
++        -fno-ident
 +        -Wall
 +        -Wextra
 +        -Wno-unused-parameter
@@ -203,16 +205,16 @@ index ff76d1f..88fc17d 100644
 +
 +install(TARGETS rdp_mcp_native ARCHIVE DESTINATION lib)
 +install(FILES src/library.h DESTINATION include/rdp-mcp)
-+
-+if(RDP_MCP_RUST_STATICLIB)
-+    if(NOT EXISTS "${RDP_MCP_RUST_STATICLIB}")
-+        message(FATAL_ERROR "Rust static library not found: ${RDP_MCP_RUST_STATICLIB}")
-+    endif()
  
 -    target_link_libraries(conduit-freerdp PRIVATE
 -        ${FREERDP_LIBRARIES}
 -        ${FREERDP_CLIENT_LIBRARIES}
 -        ${WINPR_LIBRARIES}
++if(RDP_MCP_RUST_STATICLIB)
++    if(NOT EXISTS "${RDP_MCP_RUST_STATICLIB}")
++        message(FATAL_ERROR "Rust static library not found: ${RDP_MCP_RUST_STATICLIB}")
++    endif()
++
 +    add_library(rdp_mcp_rust STATIC IMPORTED GLOBAL)
 +    set_target_properties(rdp_mcp_rust PROPERTIES
 +        IMPORTED_LOCATION "${RDP_MCP_RUST_STATICLIB}"
@@ -221,6 +223,15 @@ index ff76d1f..88fc17d 100644
 -    target_compile_options(conduit-freerdp PRIVATE -Wall -Wextra -Wno-unused-parameter)
 +    add_executable(rdp-mcp src/launcher.c)
 +    target_link_libraries(rdp-mcp PRIVATE rdp_mcp_rust rdp_mcp_native)
++
++    if(NOT MSVC)
++        target_compile_options(rdp-mcp PRIVATE
++            -Os
++            -ffunction-sections
++            -fdata-sections
++            -fno-ident
++        )
++    endif()
 +
 +    if(WIN32)
 +        target_link_libraries(rdp-mcp PRIVATE
@@ -239,10 +250,15 @@ index ff76d1f..88fc17d 100644
 +            -static
 +            -static-libgcc
 +            -Wl,--gc-sections
++            -Wl,--exclude-all-symbols
++            -Wl,--exclude-libs,ALL
++            -Wl,--no-insert-timestamp
 +            -Wl,--strip-all
 +        )
 +    elseif(NOT MSVC)
 +        target_link_options(rdp-mcp PRIVATE
++            -Wl,--as-needed
++            -Wl,--build-id=none
 +            -Wl,--gc-sections
 +            -Wl,--strip-all
 +        )

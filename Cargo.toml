@@ -14,7 +14,7 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 anyhow = "1.0"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
-base64 = "0.22"
+base64 = "0.23"
 jpeg-encoder = "0.6"
 png = "0.18"
 rmcp = { version = "3.1.4", default-features = false, features = [
@@ -36,12 +36,12 @@ tokio = { version = "1", features = [
     "time",
 ] }
 tokio-util = "0.7"
-uuid = { version = "1.6", features = ["v4"] }
+uuid = { version = "1.6", default-features = false, features = ["v4"] }
 
 [profile.release]
 codegen-units = 1
 incremental = false
-lto = "fat"
+lto = "thin"
 opt-level = "z"
 panic = "abort"
 strip = "symbols"

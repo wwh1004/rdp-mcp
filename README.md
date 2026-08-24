@@ -52,6 +52,43 @@ DLLs. Only Windows system DLLs remain. Linux also has one distribution file,
 with FreeRDP and WinPR linked statically, but still uses normal host system
 libraries such as libc, OpenSSL, and zlib.
 
+### Release size and path privacy
+
+The release profile is optimized for size: Rust uses `opt-level = "z"`, one
+codegen unit, aborting panics, symbol stripping, and Thin LTO. C dependencies
+use CMake `MinSizeRel`, `-Os`, per-function/data sections, and final-section
+garbage collection. The build also omits unused FreeRDP channels and optional
+OpenSSL programs, modules, documentation, tests, and legacy provider files.
+
+Pinned-toolchain artifacts verified on 2026-08-24 have these exact sizes:
+
+| Target | Bytes |
+| --- | ---: |
+| Windows x64 | 9,987,584 |
+| Windows x86 | 10,213,888 |
+| Linux x64 | 4,551,456 |
+| Linux x86 | 4,159,024 |
+
+Only the executable under each `dist/<target>` directory is distributable.
+Files such as `librdp-mcp.dll.a` and `librdp_mcp_native.a` in a CMake build
+directory are linker intermediates and are neither needed at runtime nor copied
+to `dist`.
+
+Rust and C source paths are remapped, dependencies use the neutral compiled-in
+prefix `/rdp-mcp`, ELF RPATH is disabled, and PE timestamps are fixed at zero.
+Every build scans both ASCII and UTF-16 strings and fails if it finds the WSL
+home, project directory, `/mnt/`, `C:\Users\`, or `D:\Projects\`. Repeated
+Windows x64 links with the same inputs are byte-for-byte identical.
+
+`RDP_MCP_RUST_OPT_LEVEL=s` (or `0`, `1`, `2`, or `3`) can be used for controlled
+measurements; `z` was the smallest tested setting. The baseline deliberately
+does not use UPX. Rust `std` cannot be omitted while Tokio, HTTP, image I/O, and
+the MCP SDK are used. Nightly `-Z build-std`, cross-language LLVM linker-plugin
+LTO, PGO, and identical-code folding require a different or training-dependent
+toolchain and are not used by the reproducible release. Disabling additional
+TLS/crypto algorithms or RDP channels may reduce size further, but changes
+endpoint compatibility and must be treated as a separate product profile.
+
 ## Run
 
 Stdio is the default transport:
