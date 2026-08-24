@@ -9,6 +9,7 @@
 
 #include "input.h"
 #include <freerdp/input.h>
+#include <freerdp/scancode.h>
 #include <winpr/synch.h>
 
 static CRITICAL_SECTION s_input_mutex;
@@ -89,26 +90,52 @@ void input_mouse_scroll(freerdp *instance, int x, int y, int delta, bool vertica
     LeaveCriticalSection(&s_input_mutex);
 }
 
-void input_key_down(freerdp *instance, int scancode, bool extended) {
-    if (!instance || !instance->context || !instance->context->input) return;
+bool input_key_down(freerdp *instance, int scancode, bool extended) {
+    if (!instance || !instance->context || !instance->context->input) return false;
+    if (scancode <= 0 || scancode > 0xFF) return false;
 
-    UINT16 flags = KBD_FLAGS_DOWN;
-    if (extended) flags |= KBD_FLAGS_EXTENDED;
+    const UINT32 rdp_scancode =
+        MAKE_RDP_SCANCODE((UINT8)scancode, extended ? TRUE : FALSE);
 
     EnterCriticalSection(&s_input_mutex);
-    freerdp_input_send_keyboard_event(instance->context->input,
-                                      flags, (UINT8)scancode);
+    const BOOL sent = freerdp_input_send_keyboard_event_ex(
+        instance->context->input, TRUE, FALSE, rdp_scancode);
     LeaveCriticalSection(&s_input_mutex);
+    return sent != FALSE;
 }
 
-void input_key_up(freerdp *instance, int scancode, bool extended) {
-    if (!instance || !instance->context || !instance->context->input) return;
+bool input_key_up(freerdp *instance, int scancode, bool extended) {
+    if (!instance || !instance->context || !instance->context->input) return false;
+    if (scancode <= 0 || scancode > 0xFF) return false;
 
-    UINT16 flags = KBD_FLAGS_RELEASE;
-    if (extended) flags |= KBD_FLAGS_EXTENDED;
+    const UINT32 rdp_scancode =
+        MAKE_RDP_SCANCODE((UINT8)scancode, extended ? TRUE : FALSE);
 
     EnterCriticalSection(&s_input_mutex);
-    freerdp_input_send_keyboard_event(instance->context->input,
-                                      flags, (UINT8)scancode);
+    const BOOL sent = freerdp_input_send_keyboard_event_ex(
+        instance->context->input, FALSE, FALSE, rdp_scancode);
     LeaveCriticalSection(&s_input_mutex);
+    return sent != FALSE;
+}
+
+bool input_unicode_key_down(freerdp *instance, int code_unit) {
+    if (!instance || !instance->context || !instance->context->input) return false;
+    if (code_unit <= 0 || code_unit > 0xFFFF) return false;
+
+    EnterCriticalSection(&s_input_mutex);
+    const BOOL sent = freerdp_input_send_unicode_keyboard_event(
+        instance->context->input, 0, (UINT16)code_unit);
+    LeaveCriticalSection(&s_input_mutex);
+    return sent != FALSE;
+}
+
+bool input_unicode_key_up(freerdp *instance, int code_unit) {
+    if (!instance || !instance->context || !instance->context->input) return false;
+    if (code_unit <= 0 || code_unit > 0xFFFF) return false;
+
+    EnterCriticalSection(&s_input_mutex);
+    const BOOL sent = freerdp_input_send_unicode_keyboard_event(
+        instance->context->input, KBD_FLAGS_RELEASE, (UINT16)code_unit);
+    LeaveCriticalSection(&s_input_mutex);
+    return sent != FALSE;
 }

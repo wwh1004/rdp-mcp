@@ -534,8 +534,15 @@ impl NativeManager {
     pub fn type_text(&self, connection_id: &str, text: &str, delay_ms: u64) -> Result<()> {
         self.with_session(connection_id, |session| {
             for character in text.chars() {
-                let stroke = key_stroke(&character.to_string())?;
-                send_key_stroke(session, stroke, &[], "press")?;
+                let mut code_units = [0; 2];
+                for code_unit in character.encode_utf16(&mut code_units) {
+                    session.command(&json!({
+                        "type": "unicode_key_down", "code_unit": *code_unit
+                    }))?;
+                    session.command(&json!({
+                        "type": "unicode_key_up", "code_unit": *code_unit
+                    }))?;
+                }
                 if delay_ms > 0 {
                     thread::sleep(Duration::from_millis(delay_ms));
                 }
@@ -626,6 +633,8 @@ fn send_key_stroke(
     modifiers: &[KeyStroke],
     action: &str,
 ) -> Result<()> {
+    const CHORD_EVENT_GAP: Duration = Duration::from_millis(75);
+
     let mut effective_modifiers = modifiers.to_vec();
     if stroke.shift && !effective_modifiers.iter().any(|item| item.scancode == 0x2a) {
         effective_modifiers.push(KeyStroke {
@@ -639,12 +648,16 @@ fn send_key_stroke(
         "press" => {
             for modifier in &effective_modifiers {
                 key_event(session, *modifier, true)?;
+                thread::sleep(CHORD_EVENT_GAP);
             }
             key_event(session, stroke, true)?;
+            thread::sleep(CHORD_EVENT_GAP);
             key_event(session, stroke, false)?;
             for modifier in effective_modifiers.iter().rev() {
+                thread::sleep(CHORD_EVENT_GAP);
                 key_event(session, *modifier, false)?;
             }
+            thread::sleep(CHORD_EVENT_GAP);
         }
         "down" => key_event(session, stroke, true)?,
         "up" => key_event(session, stroke, false)?,

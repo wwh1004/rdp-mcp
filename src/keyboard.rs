@@ -45,6 +45,10 @@ pub fn modifier(name: &str) -> Result<KeyStroke> {
 pub fn key_stroke(key: &str) -> Result<KeyStroke> {
     let lowered = key.to_ascii_lowercase();
     let named = match lowered.as_str() {
+        "ctrl" | "control" => Some(KeyStroke::new(0x1d)),
+        "alt" => Some(KeyStroke::new(0x38)),
+        "shift" => Some(KeyStroke::new(0x2a)),
+        "meta" | "win" | "windows" => Some(KeyStroke::extended(0x5b)),
         "escape" | "esc" => Some(KeyStroke::new(0x01)),
         "backspace" => Some(KeyStroke::new(0x0e)),
         "tab" => Some(KeyStroke::new(0x0f)),
@@ -193,6 +197,9 @@ mod tests {
         for character in "Hello World!".chars() {
             key_stroke(&character.to_string()).unwrap();
         }
+        assert_eq!(key_stroke(" ").unwrap(), KeyStroke::new(0x39));
+        assert_eq!(key_stroke("Control").unwrap(), KeyStroke::new(0x1d));
+        assert_eq!(key_stroke("Windows").unwrap(), KeyStroke::extended(0x5b));
         assert!(key_stroke("H").unwrap().shift);
         assert!(key_stroke("!").unwrap().shift);
     }

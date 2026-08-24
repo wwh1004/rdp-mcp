@@ -1,0 +1,2332 @@
+diff --git a/freerdp-helper/.gitignore b/freerdp-helper/.gitignore
+deleted file mode 100644
+index 9876361..0000000
+--- a/freerdp-helper/.gitignore
++++ /dev/null
+@@ -1,11 +0,0 @@
+-# FreeRDP source build (created by build-freerdp.sh)
+-deps/
+-
+-# CMake build output
+-build/
+-build-win/
+-
+-# Bundle output (keep darwin/ committed)
+-bundle/win32/
+-bundle/windows/
+-bundle/linux/
+diff --git a/freerdp-helper/CMakeLists.txt b/freerdp-helper/CMakeLists.txt
+index ff76d1f..88fc17d 100644
+--- a/freerdp-helper/CMakeLists.txt
++++ b/freerdp-helper/CMakeLists.txt
+@@ -1,10 +1,15 @@
+-cmake_minimum_required(VERSION 3.16)
+-project(conduit-freerdp C)
++cmake_minimum_required(VERSION 3.24)
++project(rdp-mcp-native C)
+ 
+ set(CMAKE_C_STANDARD 11)
++set(CMAKE_C_STANDARD_REQUIRED ON)
++set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ 
+-add_executable(conduit-freerdp
+-    src/main.c
++option(RDP_MCP_STATIC_DEPS "Link FreeRDP and its dependencies statically" ON)
++set(RDP_MCP_RUST_STATICLIB "" CACHE FILEPATH "Path to the Rust rdp_mcp static library")
++
++set(RDP_MCP_NATIVE_SOURCES
++    src/library.c
+     src/cliprdr.c
+     src/cliprdr_file.c
+     src/connection.c
+@@ -16,23 +21,26 @@ add_executable(conduit-freerdp
+     src/cjson/cJSON.c
+ )
+ 
++add_library(rdp_mcp_native STATIC ${RDP_MCP_NATIVE_SOURCES})
++add_library(rdp-mcp::native ALIAS rdp_mcp_native)
++
++target_include_directories(rdp_mcp_native
++    PUBLIC src
++    PRIVATE src/cjson
++)
++
+ if(WIN32)
+-    # Windows: FreeRDP provides CMake config files when installed
+     find_package(FreeRDP 3 REQUIRED)
+     find_package(WinPR 3 REQUIRED)
+     find_package(FreeRDP-Client 3 REQUIRED)
+ 
+-    # Add Windows-only native clipboard source
+-    target_sources(conduit-freerdp PRIVATE src/cliprdr_win32.c)
+-
+-    target_include_directories(conduit-freerdp PRIVATE
++    target_sources(rdp_mcp_native PRIVATE src/cliprdr_win32.c)
++    target_include_directories(rdp_mcp_native PRIVATE
+         ${FreeRDP_INCLUDE_DIR}
+         ${FreeRDP-Client_INCLUDE_DIR}
+         ${WinPR_INCLUDE_DIR}
+-        src/
+     )
+-
+-    target_link_libraries(conduit-freerdp PRIVATE
++    target_link_libraries(rdp_mcp_native PUBLIC
+         freerdp
+         freerdp-client
+         winpr
+@@ -41,29 +49,17 @@ if(WIN32)
+         ole32
+         shell32
+     )
++    target_compile_definitions(rdp_mcp_native PRIVATE
++        _CRT_SECURE_NO_WARNINGS
++        _WIN32_WINNT=0x0601
++    )
+ 
+-    target_compile_options(conduit-freerdp PRIVATE /W3 /D_CRT_SECURE_NO_WARNINGS)
+-    target_compile_definitions(conduit-freerdp PRIVATE _WIN32_WINNT=0x0601)
+-else()
+-    # macOS / Linux: use pkg-config with locally-built deps
+-    set(DEPS_PREFIX "${CMAKE_SOURCE_DIR}/deps/install")
+-    # Check multiple possible lib dirs (GNUInstallDirs may use lib64 or lib/x86_64-linux-gnu)
+-    set(_PKG_DIRS "")
+-    foreach(_subdir lib lib64 "lib/x86_64-linux-gnu")
+-        if(EXISTS "${DEPS_PREFIX}/${_subdir}/pkgconfig")
+-            set(_PKG_DIRS "${DEPS_PREFIX}/${_subdir}/pkgconfig:${_PKG_DIRS}")
+-        endif()
+-    endforeach()
+-    if(_PKG_DIRS)
+-        set(ENV{PKG_CONFIG_PATH} "${_PKG_DIRS}$ENV{PKG_CONFIG_PATH}")
+-        message(STATUS "Using local deps: ${DEPS_PREFIX}")
+-    else()
+-        message(WARNING "Local deps not found at ${DEPS_PREFIX} - run build-freerdp.sh first")
++    if(MINGW AND RDP_MCP_STATIC_DEPS)
++        # FreeRDP's installed API header otherwise annotates static calls as dllimport.
++        target_compile_definitions(rdp_mcp_native PRIVATE FREERDP_EXPORTS)
+     endif()
+-
++else()
+     find_package(PkgConfig REQUIRED)
+-    # FreeRDP 3.x uses different pkg-config names depending on version:
+-    # older builds use freerdp3/winpr3, newer builds use freerdp0/winpr0
+     pkg_check_modules(FREERDP freerdp3)
+     if(NOT FREERDP_FOUND)
+         pkg_check_modules(FREERDP REQUIRED freerdp0)
+@@ -77,24 +73,122 @@ else()
+         pkg_check_modules(WINPR REQUIRED winpr0)
+     endif()
+ 
+-    target_include_directories(conduit-freerdp PRIVATE
+-        ${FREERDP_INCLUDE_DIRS}
+-        ${FREERDP_CLIENT_INCLUDE_DIRS}
+-        ${WINPR_INCLUDE_DIRS}
+-        src/
+-    )
++    if(RDP_MCP_STATIC_DEPS)
++        set(RDP_MCP_FREERDP_INCLUDE_DIRS
++            ${FREERDP_STATIC_INCLUDE_DIRS}
++            ${FREERDP_CLIENT_STATIC_INCLUDE_DIRS}
++            ${WINPR_STATIC_INCLUDE_DIRS}
++        )
++        set(RDP_MCP_FREERDP_LIBRARY_DIRS
++            ${FREERDP_STATIC_LIBRARY_DIRS}
++            ${FREERDP_CLIENT_STATIC_LIBRARY_DIRS}
++            ${WINPR_STATIC_LIBRARY_DIRS}
++        )
++        set(RDP_MCP_FREERDP_LIBRARIES
++            ${FREERDP_CLIENT_STATIC_LIBRARIES}
++            ${FREERDP_STATIC_LIBRARIES}
++            ${WINPR_STATIC_LIBRARIES}
++        )
++        set(RDP_MCP_FREERDP_CFLAGS
++            ${FREERDP_STATIC_CFLAGS_OTHER}
++            ${FREERDP_CLIENT_STATIC_CFLAGS_OTHER}
++            ${WINPR_STATIC_CFLAGS_OTHER}
++        )
++        set(RDP_MCP_FREERDP_LDFLAGS
++            ${FREERDP_STATIC_LDFLAGS_OTHER}
++            ${FREERDP_CLIENT_STATIC_LDFLAGS_OTHER}
++            ${WINPR_STATIC_LDFLAGS_OTHER}
++        )
++    else()
++        set(RDP_MCP_FREERDP_INCLUDE_DIRS
++            ${FREERDP_INCLUDE_DIRS}
++            ${FREERDP_CLIENT_INCLUDE_DIRS}
++            ${WINPR_INCLUDE_DIRS}
++        )
++        set(RDP_MCP_FREERDP_LIBRARY_DIRS
++            ${FREERDP_LIBRARY_DIRS}
++            ${FREERDP_CLIENT_LIBRARY_DIRS}
++            ${WINPR_LIBRARY_DIRS}
++        )
++        set(RDP_MCP_FREERDP_LIBRARIES
++            ${FREERDP_CLIENT_LIBRARIES}
++            ${FREERDP_LIBRARIES}
++            ${WINPR_LIBRARIES}
++        )
++        set(RDP_MCP_FREERDP_CFLAGS
++            ${FREERDP_CFLAGS_OTHER}
++            ${FREERDP_CLIENT_CFLAGS_OTHER}
++            ${WINPR_CFLAGS_OTHER}
++        )
++        set(RDP_MCP_FREERDP_LDFLAGS
++            ${FREERDP_LDFLAGS_OTHER}
++            ${FREERDP_CLIENT_LDFLAGS_OTHER}
++            ${WINPR_LDFLAGS_OTHER}
++        )
++    endif()
+ 
+-    target_link_directories(conduit-freerdp PRIVATE
+-        ${FREERDP_LIBRARY_DIRS}
+-        ${FREERDP_CLIENT_LIBRARY_DIRS}
+-        ${WINPR_LIBRARY_DIRS}
++    target_include_directories(rdp_mcp_native PRIVATE ${RDP_MCP_FREERDP_INCLUDE_DIRS})
++    target_link_directories(rdp_mcp_native PUBLIC ${RDP_MCP_FREERDP_LIBRARY_DIRS})
++    target_link_libraries(rdp_mcp_native PUBLIC ${RDP_MCP_FREERDP_LIBRARIES})
++    target_compile_options(rdp_mcp_native PRIVATE ${RDP_MCP_FREERDP_CFLAGS})
++    target_link_options(rdp_mcp_native PUBLIC ${RDP_MCP_FREERDP_LDFLAGS})
++endif()
++
++if(MSVC)
++    target_compile_options(rdp_mcp_native PRIVATE /W3 /O1)
++else()
++    target_compile_options(rdp_mcp_native PRIVATE
++        -Os
++        -ffunction-sections
++        -fdata-sections
++        -Wall
++        -Wextra
++        -Wno-unused-parameter
++        -Wno-missing-field-initializers
+     )
++endif()
++
++install(TARGETS rdp_mcp_native ARCHIVE DESTINATION lib)
++install(FILES src/library.h DESTINATION include/rdp-mcp)
++
++if(RDP_MCP_RUST_STATICLIB)
++    if(NOT EXISTS "${RDP_MCP_RUST_STATICLIB}")
++        message(FATAL_ERROR "Rust static library not found: ${RDP_MCP_RUST_STATICLIB}")
++    endif()
+ 
+-    target_link_libraries(conduit-freerdp PRIVATE
+-        ${FREERDP_LIBRARIES}
+-        ${FREERDP_CLIENT_LIBRARIES}
+-        ${WINPR_LIBRARIES}
++    add_library(rdp_mcp_rust STATIC IMPORTED GLOBAL)
++    set_target_properties(rdp_mcp_rust PROPERTIES
++        IMPORTED_LOCATION "${RDP_MCP_RUST_STATICLIB}"
+     )
+ 
+-    target_compile_options(conduit-freerdp PRIVATE -Wall -Wextra -Wno-unused-parameter)
++    add_executable(rdp-mcp src/launcher.c)
++    target_link_libraries(rdp-mcp PRIVATE rdp_mcp_rust rdp_mcp_native)
++
++    if(WIN32)
++        target_link_libraries(rdp-mcp PRIVATE
++            bcrypt
++            userenv
++            advapi32
++            ntdll
++            ws2_32
++        )
++    else()
++        target_link_libraries(rdp-mcp PRIVATE dl m pthread rt util)
++    endif()
++
++    if(MINGW)
++        target_link_options(rdp-mcp PRIVATE
++            -static
++            -static-libgcc
++            -Wl,--gc-sections
++            -Wl,--strip-all
++        )
++    elseif(NOT MSVC)
++        target_link_options(rdp-mcp PRIVATE
++            -Wl,--gc-sections
++            -Wl,--strip-all
++        )
++    endif()
++
++    install(TARGETS rdp-mcp RUNTIME DESTINATION bin)
+ endif()
+diff --git a/freerdp-helper/UPSTREAM.md b/freerdp-helper/UPSTREAM.md
+new file mode 100644
+index 0000000..491ba18
+--- /dev/null
++++ b/freerdp-helper/UPSTREAM.md
+@@ -0,0 +1,13 @@
++# Upstream source
++
++The original source is `freerdp-helper` from
++<https://github.com/advenimus/conduit-desktop>. The exact upstream baseline is
++commit `9aa6ef0505dae22912b454bf22b862d6ddd505cf` (v0.16.2).
++
++The files were initially imported through a native WSL2 checkout at local
++commit `b31c267`, which contains two additional Windows build commits. This
++project adapts the helper from a standalone executable into a static C library
++for `rdp-mcp`.
++
++`../freerdp-helper-rdp-mcp.patch` contains the complete difference from the
++exact upstream baseline above to this directory.
+diff --git a/freerdp-helper/build-freerdp.sh b/freerdp-helper/build-freerdp.sh
+deleted file mode 100755
+index 9e1af9b..0000000
+--- a/freerdp-helper/build-freerdp.sh
++++ /dev/null
+@@ -1,303 +0,0 @@
+-#!/bin/bash
+-#
+-# Build FreeRDP3 and all dependencies from source for conduit-freerdp.
+-# No Homebrew or system package manager dependencies required.
+-#
+-# Dependencies built:
+-#   1. OpenSSL 3.x   (TLS/crypto for RDP)
+-#   2. FFmpeg minimal (H.264 codec for GFX pipeline)
+-#   3. FreeRDP 3.15   (with BUILTIN_CHANNELS=ON for RDPDR)
+-#
+-# Usage: bash build-freerdp.sh [--clean]
+-#
+-set -e
+-
+-OPENSSL_VERSION="3.4.1"
+-FFMPEG_VERSION="7.1"
+-FREERDP_VERSION="3.15.0"
+-
+-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+-DEPS_DIR="$SCRIPT_DIR/deps"
+-OS=$(uname -s)   # Darwin or Linux
+-ARCH=$(uname -m)
+-# Detect native architecture even under Rosetta
+-if [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+-    ARCH="arm64"
+-fi
+-NCPU=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+-
+-# Platform-specific library extension
+-if [ "$OS" = "Darwin" ]; then
+-    LIB_EXT="dylib"
+-else
+-    LIB_EXT="so"
+-fi
+-
+-# All deps install to a shared prefix so cmake/pkg-config finds everything
+-PREFIX="$DEPS_DIR/install"
+-
+-if [ "$1" = "--clean" ]; then
+-    echo "Cleaning all dependency builds..."
+-    rm -rf "$DEPS_DIR"
+-    echo "Done. Run again without --clean to rebuild."
+-    exit 0
+-fi
+-
+-echo "=== Building FreeRDP ${FREERDP_VERSION} + dependencies from source ==="
+-echo "Architecture: $ARCH"
+-echo "CPU cores: $NCPU"
+-echo "Install prefix: $PREFIX"
+-echo ""
+-
+-# Check build tools
+-for tool in cmake ninja cc; do
+-    if ! command -v "$tool" &>/dev/null; then
+-        echo "Error: $tool not found."
+-        echo "  macOS:    xcode-select --install && pip3 install cmake ninja"
+-        echo "  Windows:  choco install cmake ninja visualstudio2022buildtools"
+-        echo "  Linux:    apt install cmake ninja-build build-essential"
+-        exit 1
+-    fi
+-done
+-
+-# NASM is needed for OpenSSL assembly optimizations on x86_64
+-if [ "$ARCH" = "x86_64" ] && ! command -v nasm &>/dev/null; then
+-    echo "Warning: nasm not found, OpenSSL will build without x86 assembly optimizations"
+-fi
+-
+-mkdir -p "$DEPS_DIR" "$PREFIX"
+-
+-# ── Helper to download + extract ─────────────────────────────────────
+-
+-download_extract() {
+-    local url="$1"
+-    local dest="$2"
+-    local tarball="$DEPS_DIR/$(basename "$url")"
+-
+-    if [ -d "$dest" ]; then
+-        echo "  Source already exists: $dest"
+-        return
+-    fi
+-
+-    echo "  Downloading: $url"
+-    curl -L "$url" -o "$tarball"
+-    mkdir -p "$dest"
+-    tar xzf "$tarball" -C "$dest" --strip-components=1
+-    rm "$tarball"
+-}
+-
+-# ── 1. Build OpenSSL ─────────────────────────────────────────────────
+-
+-build_openssl() {
+-    local SRC="$DEPS_DIR/openssl-src"
+-    local BUILD_MARKER="$PREFIX/lib/libssl.${LIB_EXT}"
+-
+-    if [ -f "$BUILD_MARKER" ]; then
+-        echo "[1/3] OpenSSL ${OPENSSL_VERSION} — already built"
+-        return
+-    fi
+-
+-    echo "[1/3] Building OpenSSL ${OPENSSL_VERSION}..."
+-    download_extract \
+-        "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+-        "$SRC"
+-
+-    cd "$SRC"
+-
+-    local target
+-    if [ "$OS" = "Darwin" ]; then
+-        if [ "$ARCH" = "arm64" ]; then
+-            target="darwin64-arm64-cc"
+-        else
+-            target="darwin64-x86_64-cc"
+-        fi
+-    else
+-        # Linux
+-        if [ "$ARCH" = "aarch64" ]; then
+-            target="linux-aarch64"
+-        else
+-            target="linux-x86_64"
+-        fi
+-    fi
+-
+-    ./Configure "$target" \
+-        --prefix="$PREFIX" \
+-        --openssldir="$PREFIX/ssl" \
+-        --libdir=lib \
+-        shared \
+-        enable-legacy \
+-        no-tests \
+-        no-docs
+-
+-    make -j"$NCPU"
+-    make install_sw  # skip docs/manpages
+-
+-    # Verify legacy provider was built (required for NTLM/NLA auth)
+-    if [ ! -f "$PREFIX/lib/ossl-modules/legacy.${LIB_EXT}" ]; then
+-        echo "ERROR: OpenSSL legacy provider not found at $PREFIX/lib/ossl-modules/legacy.${LIB_EXT}"
+-        echo "NTLM authentication will not work without it."
+-        exit 1
+-    fi
+-    echo "  OpenSSL installed to $PREFIX (legacy provider: OK)"
+-}
+-
+-# ── 2. Build FFmpeg (minimal — just codecs for H.264) ────────────────
+-
+-build_ffmpeg() {
+-    local SRC="$DEPS_DIR/ffmpeg-src"
+-    local BUILD_MARKER="$PREFIX/lib/libavcodec.${LIB_EXT}"
+-
+-    if [ -f "$BUILD_MARKER" ]; then
+-        echo "[2/3] FFmpeg ${FFMPEG_VERSION} — already built"
+-        return
+-    fi
+-
+-    echo "[2/3] Building FFmpeg ${FFMPEG_VERSION} (minimal)..."
+-    download_extract \
+-        "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" \
+-        "$SRC"
+-
+-    cd "$SRC"
+-
+-    # Minimal build: only libavcodec + libavutil (needed by FreeRDP for H.264)
+-    local FFMPEG_EXTRA_FLAGS=""
+-    local EXTRA_CFLAGS="-I${PREFIX}/include"
+-    local EXTRA_LDFLAGS="-L${PREFIX}/lib"
+-
+-    if [ "$ARCH" = "x86_64" ] && ! command -v nasm &>/dev/null; then
+-        FFMPEG_EXTRA_FLAGS="--disable-x86asm"
+-    fi
+-
+-    # macOS cross-compilation: ensure compiler targets arm64 when building for arm64.
+-    # The GitHub Actions runner may run as x86_64 under Rosetta on Apple Silicon,
+-    # so FFmpeg's configure auto-detects x86_64 unless we explicitly set -arch arm64.
+-    if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
+-        EXTRA_CFLAGS="$EXTRA_CFLAGS -arch arm64"
+-        EXTRA_LDFLAGS="$EXTRA_LDFLAGS -arch arm64"
+-    fi
+-
+-    # Fix FFmpeg 7.1 CABAC assembly error on ARM64 (Apple Clang rejects "I" constraint
+-    # for values like 512, 1152 in inline asm operands). Replace constraint "I" with "i"
+-    # only in operand positions (preceded by ] from symbolic name bracket), not in
+-    # assembly template strings. This is safe because ] doesn't appear in ARM64 asm.
+-    if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+-        local CABAC_FILE="libavcodec/aarch64/cabac.h"
+-        if [ -f "$CABAC_FILE" ] && grep -q '"I"(' "$CABAC_FILE"; then
+-            echo "  Patching $CABAC_FILE (ARM64 asm constraint fix)..."
+-            if [ "$OS" = "Darwin" ]; then
+-                sed -i '' 's/\]"I"(/\]"i"(/g' "$CABAC_FILE"
+-            else
+-                sed -i 's/\]"I"(/\]"i"(/g' "$CABAC_FILE"
+-            fi
+-        fi
+-    fi
+-
+-    ./configure \
+-        --prefix="$PREFIX" \
+-        --arch="$ARCH" \
+-        --enable-shared \
+-        --disable-static \
+-        --disable-programs \
+-        --disable-doc \
+-        --disable-htmlpages \
+-        --disable-manpages \
+-        --disable-podpages \
+-        --disable-txtpages \
+-        --disable-network \
+-        --disable-everything \
+-        --enable-decoder=h264 \
+-        --enable-decoder=hevc \
+-        --enable-parser=h264 \
+-        --enable-parser=hevc \
+-        --enable-swscale \
+-        --disable-xlib \
+-        --disable-libxcb \
+-        --extra-cflags="$EXTRA_CFLAGS" \
+-        --extra-ldflags="$EXTRA_LDFLAGS" \
+-        $FFMPEG_EXTRA_FLAGS
+-
+-    make -j"$NCPU"
+-    make install
+-    echo "  FFmpeg installed to $PREFIX"
+-}
+-
+-# ── 3. Build FreeRDP ─────────────────────────────────────────────────
+-
+-build_freerdp() {
+-    local SRC="$DEPS_DIR/freerdp-src"
+-    local BUILD="$DEPS_DIR/freerdp-build"
+-    local BUILD_MARKER="$PREFIX/lib/libfreerdp0.${LIB_EXT}"
+-
+-    if [ -f "$BUILD_MARKER" ]; then
+-        echo "[3/3] FreeRDP ${FREERDP_VERSION} — already built"
+-        return
+-    fi
+-
+-    echo "[3/3] Building FreeRDP ${FREERDP_VERSION} (BUILTIN_CHANNELS=ON)..."
+-    download_extract \
+-        "https://github.com/FreeRDP/FreeRDP/releases/download/${FREERDP_VERSION}/freerdp-${FREERDP_VERSION}.tar.gz" \
+-        "$SRC"
+-
+-    # Point cmake to our local deps ONLY — exclude system/Homebrew paths
+-    export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig"
+-    export CMAKE_PREFIX_PATH="$PREFIX"
+-
+-    # Platform-specific cmake flags
+-    local PLATFORM_FLAGS=""
+-    if [ "$OS" = "Darwin" ]; then
+-        PLATFORM_FLAGS="-DCMAKE_OSX_ARCHITECTURES=$ARCH -DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local"
+-    fi
+-
+-    cmake -S "$SRC" -B "$BUILD" -G Ninja \
+-        -DCMAKE_BUILD_TYPE=Release \
+-        -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+-        -DCMAKE_INSTALL_LIBDIR=lib \
+-        -DCMAKE_PREFIX_PATH="$PREFIX" \
+-        $PLATFORM_FLAGS \
+-        -DOPENSSL_ROOT_DIR="$PREFIX" \
+-        -DBUILD_SHARED_LIBS=ON \
+-        -DWITH_CLIENT=ON \
+-        -DWITH_CLIENT_SDL=OFF \
+-        -DWITH_CLIENT_SDL2=OFF \
+-        -DWITH_CLIENT_SDL3=OFF \
+-        -DWITH_CLIENT_MAC=OFF \
+-        -DWITH_SERVER=OFF \
+-        -DWITH_SHADOW=OFF \
+-        -DWITH_PROXY=OFF \
+-        -DWITH_SAMPLE=OFF \
+-        -DWITH_MANPAGES=OFF \
+-        -DWITH_X11=OFF \
+-        -DWITH_WEBVIEW=OFF \
+-        -DWITH_JPEG=OFF \
+-        -DWITH_GFX_H264=ON \
+-        -DWITH_FFMPEG=ON \
+-        -DWITH_JSON_DISABLED=ON \
+-        -DWITH_PCSC=OFF \
+-        -DWITH_CUPS=OFF \
+-        -DWITH_PULSE=OFF \
+-        -DWITH_ALSA=OFF \
+-        -DWITH_OSS=OFF \
+-        -DWITH_FUSE=OFF \
+-        -DCHANNEL_URBDRC=OFF \
+-        -DWITH_SIMD=OFF \
+-        -DUSE_VERSION_FROM_GIT_TAG=OFF
+-
+-    cmake --build "$BUILD" -j"$NCPU"
+-    cmake --install "$BUILD"
+-    echo "  FreeRDP installed to $PREFIX"
+-}
+-
+-# ── Run all builds ───────────────────────────────────────────────────
+-
+-build_openssl
+-build_ffmpeg
+-build_freerdp
+-
+-echo ""
+-echo "=== All dependencies built ==="
+-echo "Install prefix: $PREFIX"
+-echo "Libraries:      $PREFIX/lib/"
+-echo "Headers:        $PREFIX/include/"
+-echo "Pkg-config:     $PREFIX/lib/pkgconfig/"
+-echo ""
+-echo "Next: cd build && cmake .. -G Ninja && ninja"
+diff --git a/freerdp-helper/scripts/build-linux.sh b/freerdp-helper/scripts/build-linux.sh
+deleted file mode 100755
+index 7d36ac1..0000000
+--- a/freerdp-helper/scripts/build-linux.sh
++++ /dev/null
+@@ -1,205 +0,0 @@
+-#!/bin/bash
+-#
+-# Build and bundle conduit-freerdp helper binary on Linux.
+-# Requires: cmake, ninja-build, patchelf, pkg-config, build-essential
+-#
+-# This script:
+-#   1. Ensures FreeRDP dependencies are built (via build-freerdp.sh)
+-#   2. Builds the conduit-freerdp binary with cmake + ninja
+-#   3. Bundles the binary + all .so dependencies into bundle/linux/
+-#   4. Uses patchelf to set RPATH to $ORIGIN for self-contained deployment
+-#
+-set -e
+-
+-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+-BUILD_DIR="$PROJECT_DIR/build"
+-BUNDLE_DIR="$PROJECT_DIR/bundle/linux"
+-DEPS_LIB="$PROJECT_DIR/deps/install/lib"
+-DEPS_PREFIX="$PROJECT_DIR/deps/install"
+-
+-echo "=== Building conduit-freerdp (Linux) ==="
+-echo "Project dir: $PROJECT_DIR"
+-
+-# Check build tools
+-for tool in cmake ninja patchelf; do
+-    if ! command -v "$tool" &>/dev/null; then
+-        echo "Error: $tool not found."
+-        echo "  Install with: sudo apt install cmake ninja-build patchelf"
+-        exit 1
+-    fi
+-done
+-
+-# Build all deps from source if not already built
+-if [ ! -d "$DEPS_PREFIX/lib" ]; then
+-    echo "Dependencies not found at $DEPS_PREFIX, building from source..."
+-    bash "$PROJECT_DIR/build-freerdp.sh"
+-fi
+-
+-# Detect architecture
+-ARCH=$(uname -m)
+-echo "Architecture: $ARCH"
+-echo "Deps prefix: $DEPS_PREFIX"
+-
+-# ── Phase 1: Build the binary ────────────────────────────────────────
+-
+-mkdir -p "$BUILD_DIR"
+-cd "$BUILD_DIR"
+-
+-# Set PKG_CONFIG_PATH so cmake's pkg_check_modules finds locally-built FreeRDP
+-# Include both lib/ and lib64/ (OpenSSL uses lib64/ on x86_64 Linux)
+-export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:$DEPS_PREFIX/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+-
+-cmake -G Ninja \
+-    -DCMAKE_BUILD_TYPE=Release \
+-    "$PROJECT_DIR"
+-
+-ninja
+-
+-echo ""
+-echo "=== Binary built ==="
+-ls -la "$BUILD_DIR/conduit-freerdp"
+-file "$BUILD_DIR/conduit-freerdp"
+-
+-# ── Phase 2: Bundle with shared libraries ─────────────────────────────
+-
+-BINARY="$BUILD_DIR/conduit-freerdp"
+-
+-if [ ! -f "$BINARY" ]; then
+-    echo "Error: Binary not found at $BINARY"
+-    exit 1
+-fi
+-
+-echo ""
+-echo "=== Bundling conduit-freerdp ==="
+-
+-# Clean and create bundle dir
+-rm -rf "$BUNDLE_DIR"
+-mkdir -p "$BUNDLE_DIR"
+-
+-# Copy binary
+-cp "$BINARY" "$BUNDLE_DIR/"
+-
+-# ── Recursively discover all non-system .so dependencies ──────────────
+-
+-declare -A ALL_LIBS
+-
+-is_system_lib() {
+-    local path="$1"
+-    case "$path" in
+-        /lib/*|/lib64/*|/usr/lib/*|/usr/lib64/*|linux-vdso*|linux-gate*)
+-            return 0 ;;
+-        *)
+-            return 1 ;;
+-    esac
+-}
+-
+-scan_deps() {
+-    local file="$1"
+-    while IFS= read -r line; do
+-        # ldd output format: "libfoo.so.1 => /path/to/libfoo.so.1 (0x...)"
+-        # or: "/lib64/ld-linux-x86-64.so.2 (0x...)"
+-        local lib_name lib_path
+-
+-        if echo "$line" | grep -q "=>"; then
+-            lib_name=$(echo "$line" | awk '{print $1}')
+-            lib_path=$(echo "$line" | awk '{print $3}')
+-        else
+-            continue
+-        fi
+-
+-        [ -z "$lib_path" ] && continue
+-        [ "$lib_path" = "not" ] && continue  # "not found"
+-        is_system_lib "$lib_path" && continue
+-        [ -n "${ALL_LIBS[$lib_name]+x}" ] && continue
+-
+-        if [ -f "$lib_path" ]; then
+-            ALL_LIBS["$lib_name"]="$lib_path"
+-            echo "  Found: $lib_name -> $lib_path"
+-            scan_deps "$lib_path"
+-        fi
+-    done < <(ldd "$file" 2>/dev/null)
+-}
+-
+-echo "Discovering all dependencies (recursive)..."
+-scan_deps "$BINARY"
+-
+-echo ""
+-echo "Total non-system shared libs: ${#ALL_LIBS[@]}"
+-
+-# ── Copy all shared libraries ─────────────────────────────────────────
+-
+-echo ""
+-echo "Copying shared libraries..."
+-for lib_name in "${!ALL_LIBS[@]}"; do
+-    lib_path="${ALL_LIBS[$lib_name]}"
+-    # Resolve symlinks to get actual file
+-    actual=$(readlink -f "$lib_path" 2>/dev/null || echo "$lib_path")
+-    if [ -f "$actual" ]; then
+-        cp "$actual" "$BUNDLE_DIR/$lib_name"
+-        chmod u+w "$BUNDLE_DIR/$lib_name"
+-        echo "  Copied: $lib_name"
+-    fi
+-done
+-
+-# ── Bundle OpenSSL provider modules (legacy provider needed for NTLM/NLA) ──
+-
+-for ossl_dir in "$DEPS_LIB/ossl-modules" "$DEPS_PREFIX/lib64/ossl-modules"; do
+-    if [ -d "$ossl_dir" ]; then
+-        mkdir -p "$BUNDLE_DIR/ossl-modules"
+-        cp "$ossl_dir"/*.so "$BUNDLE_DIR/ossl-modules/" 2>/dev/null || true
+-        for f in "$BUNDLE_DIR/ossl-modules"/*.so; do
+-            [ -f "$f" ] || continue
+-            chmod u+w "$f"
+-            # Provider modules are in ossl-modules/ subdirectory — set RPATH to find
+-            # libcrypto.so one level up at $ORIGIN/..
+-            patchelf --set-rpath '$ORIGIN/..' "$f" 2>/dev/null || true
+-            echo "  Bundled: ossl-modules/$(basename "$f") (RPATH=\$ORIGIN/..)"
+-        done
+-        break
+-    fi
+-done
+-
+-# ── Fix RPATH with patchelf ───────────────────────────────────────────
+-
+-echo ""
+-echo "Setting RPATH..."
+-
+-# Set the binary's RPATH to $ORIGIN so it finds bundled .so files
+-patchelf --set-rpath '$ORIGIN' "$BUNDLE_DIR/conduit-freerdp"
+-echo "  conduit-freerdp: RPATH set to \$ORIGIN"
+-
+-# Set each .so's RPATH to $ORIGIN
+-for lib_name in "${!ALL_LIBS[@]}"; do
+-    if [ -f "$BUNDLE_DIR/$lib_name" ]; then
+-        patchelf --set-rpath '$ORIGIN' "$BUNDLE_DIR/$lib_name" 2>/dev/null || true
+-        echo "  $lib_name: RPATH set to \$ORIGIN"
+-    fi
+-done
+-
+-# ── Verify ────────────────────────────────────────────────────────────
+-
+-echo ""
+-echo "=== Bundle complete ==="
+-echo "Bundle dir: $BUNDLE_DIR"
+-ls -lh "$BUNDLE_DIR"
+-
+-echo ""
+-echo "Verifying binary dependencies (should all be bundled or system):"
+-ldd "$BUNDLE_DIR/conduit-freerdp"
+-
+-echo ""
+-echo "Checking for unresolved dependencies..."
+-MISSING=0
+-while IFS= read -r line; do
+-    if echo "$line" | grep -q "not found"; then
+-        echo "  WARNING: $line"
+-        MISSING=$((MISSING + 1))
+-    fi
+-done < <(LD_LIBRARY_PATH="$BUNDLE_DIR" ldd "$BUNDLE_DIR/conduit-freerdp" 2>/dev/null)
+-
+-if [ "$MISSING" -eq 0 ]; then
+-    echo "  All dependencies resolved!"
+-else
+-    echo "  $MISSING unresolved dependencies"
+-fi
+diff --git a/freerdp-helper/scripts/build-macos.sh b/freerdp-helper/scripts/build-macos.sh
+deleted file mode 100755
+index 9704446..0000000
+--- a/freerdp-helper/scripts/build-macos.sh
++++ /dev/null
+@@ -1,61 +0,0 @@
+-#!/bin/bash
+-#
+-# Build conduit-freerdp helper binary on macOS.
+-# Requires: cmake ninja (brew install cmake ninja)
+-# FreeRDP is built from source via build-freerdp.sh (no Homebrew freerdp needed)
+-#
+-set -e
+-
+-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+-BUILD_DIR="$PROJECT_DIR/build"
+-DEPS_PREFIX="$PROJECT_DIR/deps/install"
+-
+-echo "=== Building conduit-freerdp ==="
+-echo "Project dir: $PROJECT_DIR"
+-
+-# Check build tools
+-if ! command -v cmake &>/dev/null; then
+-    echo "Error: cmake not found. Install with: brew install cmake"
+-    exit 1
+-fi
+-
+-if ! command -v ninja &>/dev/null; then
+-    echo "Error: ninja not found. Install with: brew install ninja"
+-    exit 1
+-fi
+-
+-# Build all deps from source if not already built
+-if [ ! -d "$DEPS_PREFIX/lib" ]; then
+-    echo "Dependencies not found at $DEPS_PREFIX, building from source..."
+-    bash "$PROJECT_DIR/build-freerdp.sh"
+-fi
+-
+-# Detect architecture (handle Rosetta — use native arch on Apple Silicon)
+-ARCH=$(uname -m)
+-if [ "$ARCH" = "x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+-    ARCH="arm64"
+-fi
+-echo "Architecture: $ARCH"
+-echo "Deps prefix: $DEPS_PREFIX"
+-
+-# Create build directory
+-mkdir -p "$BUILD_DIR"
+-cd "$BUILD_DIR"
+-
+-# Set PKG_CONFIG_PATH so cmake's pkg_check_modules finds locally-built FreeRDP
+-export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+-
+-# Configure and build with Ninja
+-cmake -G Ninja \
+-    -DCMAKE_BUILD_TYPE=Release \
+-    -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+-    "$PROJECT_DIR"
+-
+-ninja
+-
+-echo ""
+-echo "=== Build complete ==="
+-echo "Binary: $BUILD_DIR/conduit-freerdp"
+-ls -la "$BUILD_DIR/conduit-freerdp"
+-file "$BUILD_DIR/conduit-freerdp"
+diff --git a/freerdp-helper/scripts/build-windows.ps1 b/freerdp-helper/scripts/build-windows.ps1
+deleted file mode 100644
+index 949c4d4..0000000
+--- a/freerdp-helper/scripts/build-windows.ps1
++++ /dev/null
+@@ -1,353 +0,0 @@
+-#
+-# build-windows.ps1 - Build conduit-freerdp helper binary on Windows.
+-#
+-# Prerequisites:
+-#   - Visual Studio Build Tools 2022 (C++ Desktop workload)
+-#   - CMake (3.16+)
+-#   - Perl (Strawberry Perl) — for building OpenSSL from source
+-#
+-# Dependencies built:
+-#   1. OpenSSL 3.4.1  (TLS/crypto — required by FreeRDP 3.15+)
+-#   2. zlib 1.3.1     (compression)
+-#   3. FreeRDP 3.15   (with Media Foundation for H.264)
+-#
+-# Usage: powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 [-Clean]
+-#
+-param(
+-    [switch]$Clean
+-)
+-
+-$ErrorActionPreference = "Stop"
+-
+-$OPENSSL_VERSION = "3.4.1"
+-$ZLIB_VERSION = "1.3.1"
+-$FREERDP_VERSION = "3.15.0"
+-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+-$ProjectDir = Split-Path -Parent $ScriptDir
+-$DepsDir = Join-Path $ProjectDir "deps"
+-$Prefix = Join-Path $DepsDir "install"
+-$BuildDir = Join-Path $ProjectDir "build-win"
+-$BundleDir = Join-Path (Join-Path $ProjectDir "bundle") "win32"
+-
+-if ($Clean) {
+-    Write-Host "Cleaning all build artifacts..."
+-    if (Test-Path $DepsDir) { Remove-Item -Recurse -Force $DepsDir }
+-    if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
+-    if (Test-Path $BundleDir) { Remove-Item -Recurse -Force $BundleDir }
+-    Write-Host "Done. Run again without -Clean to rebuild."
+-    exit 0
+-}
+-
+-Write-Host "=== Building conduit-freerdp (Windows) ==="
+-Write-Host "Project dir: $ProjectDir"
+-Write-Host "Install prefix: $Prefix"
+-Write-Host ""
+-
+-# -- Helper: check exit code after native commands -------------------------
+-
+-function Assert-ExitCode($step) {
+-    if ($LASTEXITCODE -ne 0) {
+-        Write-Error "$step failed with exit code $LASTEXITCODE"
+-        exit $LASTEXITCODE
+-    }
+-}
+-
+-# -- Check build tools -----------------------------------------------------
+-
+-function Test-Command($cmd) {
+-    try { Get-Command $cmd -ErrorAction Stop | Out-Null; return $true }
+-    catch { return $false }
+-}
+-
+-if (-not (Test-Command "cmake")) {
+-    Write-Error "cmake not found. Install from https://cmake.org/download/ or via 'winget install cmake'"
+-    exit 1
+-}
+-
+-# Check for MSVC (cl.exe) - needed for nmake/OpenSSL builds.
+-# If not in PATH, auto-detect Visual Studio and source vcvarsall.bat.
+-if (-not (Test-Command "cl")) {
+-    Write-Host "cl.exe not found in PATH - searching for Visual Studio installation..."
+-
+-    # Use vswhere (ships with VS 2017+ Build Tools) to locate the install
+-    $vswherePath = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+-    if (-not (Test-Path $vswherePath)) {
+-        Write-Error "Visual Studio Build Tools not found. Install from https://visualstudio.microsoft.com/visual-cpp-build-tools/ with the Desktop development with C++ workload."
+-        exit 1
+-    }
+-
+-    $vsPath = & $vswherePath -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+-    if (-not $vsPath) {
+-        Write-Error "No Visual Studio installation with C++ tools found. Install Visual Studio Build Tools with the Desktop development with C++ workload."
+-        exit 1
+-    }
+-
+-    $vcvarsall = Join-Path $vsPath 'VC\Auxiliary\Build\vcvarsall.bat'
+-    if (-not (Test-Path $vcvarsall)) {
+-        Write-Error ('vcvarsall.bat not found at: ' + $vcvarsall)
+-        exit 1
+-    }
+-
+-    Write-Host "  Found: $vsPath"
+-    Write-Host "  Sourcing MSVC environment (x64)..."
+-
+-    # Write a temp batch file that sources vcvarsall then prints env vars.
+-    # This avoids PS5.1 parsing issues with &, &&, and redirection in strings.
+-    $tempBat = Join-Path $env:TEMP 'conduit_vcvars.bat'
+-    $line1 = '@call "' + $vcvarsall + '" x64 >nul 2>&1'
+-    $line2 = '@set'
+-    Set-Content -Path $tempBat -Value ($line1, $line2) -Encoding ASCII
+-
+-    $envBlock = & cmd.exe /c $tempBat
+-    Remove-Item $tempBat -ErrorAction SilentlyContinue
+-
+-    foreach ($entry in $envBlock) {
+-        if ($entry -match '^([^=]+)=(.*)$') {
+-            [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+-        }
+-    }
+-
+-    if (-not (Test-Command "cl")) {
+-        Write-Error "Failed to source MSVC environment. Please run from a Developer Command Prompt for VS 2022."
+-        exit 1
+-    }
+-    Write-Host "  MSVC environment loaded - cl.exe and nmake are now available."
+-    Write-Host ""
+-} else {
+-    Write-Host "MSVC tools found in PATH."
+-}
+-
+-New-Item -ItemType Directory -Force -Path $DepsDir | Out-Null
+-New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
+-
+-# -- 1. Build OpenSSL -----------------------------------------------------
+-
+-$OpenSSLSrc = Join-Path $DepsDir "openssl-src"
+-$OpenSSLMarker = Join-Path (Join-Path $Prefix "lib") "libssl.lib"
+-
+-if (Test-Path $OpenSSLMarker) {
+-    Write-Host "[1/5] OpenSSL ${OPENSSL_VERSION} - already built"
+-} else {
+-    Write-Host "[1/5] Building OpenSSL ${OPENSSL_VERSION}..."
+-
+-    # Perl is required for OpenSSL's Configure script
+-    if (-not (Test-Command "perl")) {
+-        Write-Error "perl not found. Install Strawberry Perl (https://strawberryperl.com/) or add it to PATH."
+-        exit 1
+-    }
+-
+-    # Download OpenSSL source
+-    if (-not (Test-Path $OpenSSLSrc)) {
+-        $tarball = Join-Path $DepsDir "openssl-${OPENSSL_VERSION}.tar.gz"
+-        $url = "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+-        Write-Host "  Downloading: $url"
+-        Invoke-WebRequest -Uri $url -OutFile $tarball
+-        New-Item -ItemType Directory -Force -Path $OpenSSLSrc | Out-Null
+-        tar -xzf $tarball -C $OpenSSLSrc --strip-components=1
+-        Remove-Item $tarball
+-    }
+-
+-    Push-Location $OpenSSLSrc
+-
+-    # Configure for 64-bit Windows MSVC. no-asm avoids NASM dependency.
+-    perl Configure VC-WIN64A --prefix="$Prefix" --openssldir="$Prefix\ssl" shared no-tests no-docs no-asm
+-    Assert-ExitCode "OpenSSL configure"
+-
+-    nmake
+-    Assert-ExitCode "OpenSSL build"
+-
+-    nmake install_sw
+-    Assert-ExitCode "OpenSSL install"
+-
+-    Pop-Location
+-    Write-Host "  OpenSSL installed to $Prefix"
+-}
+-
+-# -- 2. Build zlib --------------------------------------------------------
+-
+-$ZlibSrc = Join-Path $DepsDir "zlib-src"
+-$ZlibBuild = Join-Path $DepsDir "zlib-build"
+-$ZlibMarker = Join-Path (Join-Path $Prefix "lib") "zlib.lib"
+-
+-if (Test-Path $ZlibMarker) {
+-    Write-Host "[2/5] zlib ${ZLIB_VERSION} - already built"
+-} else {
+-    Write-Host "[2/5] Building zlib ${ZLIB_VERSION}..."
+-
+-    if (-not (Test-Path $ZlibSrc)) {
+-        $tarball = Join-Path $DepsDir "zlib-${ZLIB_VERSION}.tar.gz"
+-        $url = "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz"
+-        Write-Host "  Downloading: $url"
+-        Invoke-WebRequest -Uri $url -OutFile $tarball
+-        New-Item -ItemType Directory -Force -Path $ZlibSrc | Out-Null
+-        tar -xzf $tarball -C $ZlibSrc --strip-components=1
+-        Remove-Item $tarball
+-    }
+-
+-    cmake -S $ZlibSrc -B $ZlibBuild `
+-        -DCMAKE_BUILD_TYPE=Release `
+-        -DCMAKE_INSTALL_PREFIX="$Prefix"
+-    Assert-ExitCode "zlib cmake configure"
+-
+-    cmake --build $ZlibBuild --config Release --parallel
+-    Assert-ExitCode "zlib cmake build"
+-
+-    cmake --install $ZlibBuild --config Release
+-    Assert-ExitCode "zlib cmake install"
+-
+-    Write-Host "  zlib installed to $Prefix"
+-}
+-
+-# -- 3. Build FreeRDP from source -----------------------------------------
+-
+-$FreerdpSrc = Join-Path $DepsDir "freerdp-src"
+-$FreerdpBuild = Join-Path $DepsDir "freerdp-build"
+-$FreerdpMarker = Join-Path (Join-Path $Prefix "lib") "freerdp3.lib"
+-
+-if (Test-Path $FreerdpMarker) {
+-    Write-Host "[3/5] FreeRDP ${FREERDP_VERSION} - already built"
+-} else {
+-    Write-Host "[3/5] Building FreeRDP ${FREERDP_VERSION}..."
+-
+-    # Download and extract source
+-    if (-not (Test-Path $FreerdpSrc)) {
+-        $tarball = Join-Path $DepsDir "freerdp-${FREERDP_VERSION}.tar.gz"
+-        $url = "https://github.com/FreeRDP/FreeRDP/releases/download/${FREERDP_VERSION}/freerdp-${FREERDP_VERSION}.tar.gz"
+-        Write-Host "  Downloading: $url"
+-        Invoke-WebRequest -Uri $url -OutFile $tarball
+-        New-Item -ItemType Directory -Force -Path $FreerdpSrc | Out-Null
+-        tar -xzf $tarball -C $FreerdpSrc --strip-components=1
+-        Remove-Item $tarball
+-    }
+-
+-    # Configure with Visual Studio generator
+-    # Uses locally-built OpenSSL + Media Foundation for H.264 (no FFmpeg on Windows)
+-    cmake -S $FreerdpSrc -B $FreerdpBuild `
+-        -DCMAKE_BUILD_TYPE=Release `
+-        -DCMAKE_INSTALL_PREFIX="$Prefix" `
+-        -DCMAKE_PREFIX_PATH="$Prefix" `
+-        -DOPENSSL_ROOT_DIR="$Prefix" `
+-        -DBUILD_SHARED_LIBS=ON `
+-        -DWITH_FFMPEG=OFF `
+-        -DWITH_SWSCALE=OFF `
+-        -DWITH_MEDIA_FOUNDATION=OFF `
+-        -DWITH_CLIENT=ON `
+-        -DWITH_CLIENT_SDL=OFF `
+-        -DWITH_CLIENT_SDL2=OFF `
+-        -DWITH_CLIENT_SDL3=OFF `
+-        -DWITH_SERVER=OFF `
+-        -DWITH_SHADOW=OFF `
+-        -DWITH_PROXY=OFF `
+-        -DWITH_SAMPLE=OFF `
+-        -DWITH_MANPAGES=OFF `
+-        -DWITH_X11=OFF `
+-        -DWITH_WEBVIEW=OFF `
+-        -DWITH_JPEG=OFF `
+-        -DWITH_GFX_H264=OFF `
+-        -DWITH_JSON_DISABLED=ON `
+-        -DWITH_PCSC=OFF `
+-        -DWITH_CUPS=OFF `
+-        -DWITH_PULSE=OFF `
+-        -DWITH_ALSA=OFF `
+-        -DWITH_OSS=OFF `
+-        -DWITH_FUSE=OFF `
+-        -DCHANNEL_URBDRC=OFF `
+-        -DWITH_SIMD=OFF `
+-        -DUSE_VERSION_FROM_GIT_TAG=OFF
+-    Assert-ExitCode "FreeRDP cmake configure"
+-
+-    cmake --build $FreerdpBuild --config Release --parallel
+-    Assert-ExitCode "FreeRDP cmake build"
+-
+-    cmake --install $FreerdpBuild --config Release
+-    Assert-ExitCode "FreeRDP cmake install"
+-
+-    Write-Host "  FreeRDP installed to $Prefix"
+-}
+-
+-# -- 4. Build conduit-freerdp ---------------------------------------------
+-
+-Write-Host "[4/5] Building conduit-freerdp..."
+-New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+-
+-cmake -S $ProjectDir -B $BuildDir `
+-    -DCMAKE_BUILD_TYPE=Release `
+-    -DCMAKE_PREFIX_PATH="$Prefix"
+-Assert-ExitCode "conduit-freerdp cmake configure"
+-
+-cmake --build $BuildDir --config Release
+-Assert-ExitCode "conduit-freerdp cmake build"
+-
+-$Binary = Join-Path (Join-Path $BuildDir "Release") "conduit-freerdp.exe"
+-if (-not (Test-Path $Binary)) {
+-    # Some generators put it directly in build dir
+-    $Binary = Join-Path $BuildDir "conduit-freerdp.exe"
+-}
+-
+-if (-not (Test-Path $Binary)) {
+-    Write-Error "Build failed: conduit-freerdp.exe not found"
+-    exit 1
+-}
+-
+-Write-Host "  Binary: $Binary"
+-
+-# -- 5. Bundle binary + DLLs ----------------------------------------------
+-
+-Write-Host "[5/5] Creating bundle..."
+-
+-if (Test-Path $BundleDir) { Remove-Item -Recurse -Force $BundleDir }
+-New-Item -ItemType Directory -Force -Path $BundleDir | Out-Null
+-
+-# Copy binary
+-Copy-Item $Binary $BundleDir
+-
+-# Copy DLLs from install prefix bin/ (OpenSSL, FreeRDP DLLs)
+-$DllDir = Join-Path $Prefix "bin"
+-if (Test-Path $DllDir) {
+-    $dlls = Get-ChildItem -Path $DllDir -Filter "*.dll"
+-    foreach ($dll in $dlls) {
+-        Copy-Item $dll.FullName $BundleDir
+-        Write-Host "  Copied: $($dll.Name)"
+-    }
+-}
+-
+-# Also check lib/ for DLLs (some CMake configs put them there)
+-$LibDir = Join-Path $Prefix "lib"
+-if (Test-Path $LibDir) {
+-    $libDlls = Get-ChildItem -Path $LibDir -Filter "*.dll" -ErrorAction SilentlyContinue
+-    foreach ($dll in $libDlls) {
+-        if (-not (Test-Path (Join-Path $BundleDir $dll.Name))) {
+-            Copy-Item $dll.FullName $BundleDir
+-            Write-Host "  Copied: $($dll.Name)"
+-        }
+-    }
+-}
+-
+-# Copy OpenSSL modules (legacy provider - required for NTLM/md4/rc4)
+-$OsslModulesDir = Join-Path $LibDir "ossl-modules"
+-if (Test-Path $OsslModulesDir) {
+-    $BundleOsslDir = Join-Path $BundleDir "ossl-modules"
+-    New-Item -ItemType Directory -Force -Path $BundleOsslDir | Out-Null
+-    $modules = Get-ChildItem -Path $OsslModulesDir -Filter "*.dll" -ErrorAction SilentlyContinue
+-    foreach ($mod in $modules) {
+-        Copy-Item $mod.FullName $BundleOsslDir
+-        Write-Host "  Copied: ossl-modules/$($mod.Name)"
+-    }
+-} else {
+-    Write-Warning "ossl-modules directory not found at $OsslModulesDir - NTLM/NLA auth may not work!"
+-}
+-
+-# -- Verify ----------------------------------------------------------------
+-
+-Write-Host ""
+-Write-Host "=== Bundle complete ==="
+-Write-Host "Bundle dir: $BundleDir"
+-Get-ChildItem $BundleDir | Format-Table Name, Length -AutoSize
+-
+-$bundledExe = Join-Path $BundleDir "conduit-freerdp.exe"
+-if (Test-Path $bundledExe) {
+-    Write-Host "Bundle verified: conduit-freerdp.exe present"
+-} else {
+-    Write-Error "Bundle verification failed: conduit-freerdp.exe not found in bundle"
+-    exit 1
+-}
+diff --git a/freerdp-helper/scripts/bundle-macos.sh b/freerdp-helper/scripts/bundle-macos.sh
+deleted file mode 100755
+index 0a426ad..0000000
+--- a/freerdp-helper/scripts/bundle-macos.sh
++++ /dev/null
+@@ -1,277 +0,0 @@
+-#!/bin/bash
+-#
+-# Bundle conduit-freerdp with its FreeRDP dylibs for distribution.
+-# Recursively discovers and bundles ALL non-system dylib dependencies.
+-# Resolves @rpath references using the local deps/install/lib/ directory.
+-# Creates freerdp-helper/bundle/darwin/ with the binary and all required libs.
+-#
+-set -e
+-
+-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+-BUILD_DIR="$PROJECT_DIR/build"
+-BUNDLE_DIR="$PROJECT_DIR/bundle/darwin"
+-DEPS_LIB="$PROJECT_DIR/deps/install/lib"
+-BINARY="$BUILD_DIR/conduit-freerdp"
+-
+-# Ensure binary exists
+-if [ ! -f "$BINARY" ]; then
+-    echo "Error: Binary not found at $BINARY"
+-    echo "Run build-macos.sh first."
+-    exit 1
+-fi
+-
+-echo "=== Bundling conduit-freerdp ==="
+-
+-# Clean and create bundle dir
+-rm -rf "$BUNDLE_DIR"
+-mkdir -p "$BUNDLE_DIR"
+-
+-# Copy binary
+-cp "$BINARY" "$BUNDLE_DIR/"
+-
+-# ── Recursively discover all non-system dylib dependencies ────────────
+-
+-# Map of original_ref -> bundled_name, emulated with two parallel indexed
+-# arrays so the script runs on stock macOS /bin/bash (3.2), which lacks the
+-# `declare -A` associative arrays available only in bash 4+. The dependency
+-# count is small (dozens), so linear lookups are cheap.
+-DYLIB_REFS=()   # keys:   original dependency references (may contain @rpath/, /, .)
+-DYLIB_NAMES=()  # values: bundled basenames, index-aligned with DYLIB_REFS
+-
+-# True if a dependency reference has already been recorded.
+-dylib_has_ref() {
+-    local key="$1" i
+-    for i in "${!DYLIB_REFS[@]}"; do
+-        [ "${DYLIB_REFS[$i]}" = "$key" ] && return 0
+-    done
+-    return 1
+-}
+-
+-# True if a basename is one of the bundled libs (i.e. a recorded value).
+-dylib_has_name() {
+-    local key="$1" name
+-    for name in "${DYLIB_NAMES[@]}"; do
+-        [ "$name" = "$key" ] && return 0
+-    done
+-    return 1
+-}
+-
+-is_system_lib() {
+-    local path="$1"
+-    case "$path" in
+-        /usr/lib/*|/System/*|@loader_path/*|@executable_path/*)
+-            return 0 ;;
+-        *)
+-            return 1 ;;
+-    esac
+-}
+-
+-# Resolve a dylib path — handles @rpath by looking in deps/install/lib/
+-resolve_path() {
+-    local dep_path="$1"
+-
+-    # @rpath reference: look in our deps lib directory
+-    if [[ "$dep_path" == @rpath/* ]]; then
+-        local basename="${dep_path#@rpath/}"
+-        local resolved="$DEPS_LIB/$basename"
+-        if [ -f "$resolved" ]; then
+-            echo "$resolved"
+-            return
+-        fi
+-    fi
+-
+-    # Absolute path or other: try to resolve symlinks
+-    if [ -f "$dep_path" ]; then
+-        readlink -f "$dep_path" 2>/dev/null || realpath "$dep_path" 2>/dev/null || echo "$dep_path"
+-        return
+-    fi
+-
+-    echo ""
+-}
+-
+-# Recursively scan a file for non-system dylib dependencies
+-scan_deps() {
+-    local file="$1"
+-    while IFS= read -r line; do
+-        local dep_ref
+-        dep_ref=$(echo "$line" | awk '{print $1}')
+-
+-        # Skip empty, system libs, and already-processed libs
+-        [ -z "$dep_ref" ] && continue
+-        is_system_lib "$dep_ref" && continue
+-        dylib_has_ref "$dep_ref" && continue
+-
+-        local dep_name
+-        dep_name=$(basename "$dep_ref")
+-
+-        local actual
+-        actual=$(resolve_path "$dep_ref")
+-
+-        if [ -n "$actual" ] && [ -f "$actual" ]; then
+-            DYLIB_REFS+=("$dep_ref")
+-            DYLIB_NAMES+=("$dep_name")
+-            echo "  Found: $dep_ref -> $dep_name ($actual)"
+-            # Recurse into this dylib's dependencies
+-            scan_deps "$actual"
+-        else
+-            echo "  Warning: $dep_ref not found"
+-        fi
+-    done < <(otool -L "$file" | tail -n +2)
+-}
+-
+-echo "Discovering all dependencies (recursive)..."
+-scan_deps "$BINARY"
+-
+-echo ""
+-echo "Total non-system dylibs: ${#DYLIB_REFS[@]}"
+-
+-# ── Copy all dylibs ──────────────────────────────────────────────────
+-
+-echo ""
+-echo "Copying dylibs..."
+-for i in "${!DYLIB_REFS[@]}"; do
+-    dep_ref="${DYLIB_REFS[$i]}"
+-    name="${DYLIB_NAMES[$i]}"
+-    actual=$(resolve_path "$dep_ref")
+-    if [ -n "$actual" ] && [ -f "$actual" ]; then
+-        cp "$actual" "$BUNDLE_DIR/$name"
+-        chmod u+w "$BUNDLE_DIR/$name"
+-        echo "  Copied: $name"
+-    fi
+-done
+-
+-# ── Bundle OpenSSL provider modules (legacy provider needed for NTLM/NLA) ──
+-
+-echo ""
+-echo "Bundling OpenSSL provider modules..."
+-if [ -d "$DEPS_LIB/ossl-modules" ]; then
+-    mkdir -p "$BUNDLE_DIR/ossl-modules"
+-    cp "$DEPS_LIB/ossl-modules"/*.dylib "$BUNDLE_DIR/ossl-modules/" 2>/dev/null || true
+-    for f in "$BUNDLE_DIR/ossl-modules"/*.dylib; do
+-        [ -f "$f" ] || continue
+-        chmod u+w "$f"
+-        # Fix libcrypto reference: provider modules are in ossl-modules/ subdirectory,
+-        # so libcrypto.3.dylib is one level up at @loader_path/../
+-        while IFS= read -r line; do
+-            dep_path=$(echo "$line" | awk '{print $1}')
+-            dep_name=$(basename "$dep_path" 2>/dev/null)
+-            if [ "$dep_name" = "libcrypto.3.dylib" ] && [[ "$dep_path" != @loader_path/* ]]; then
+-                install_name_tool -change "$dep_path" "@loader_path/../libcrypto.3.dylib" "$f" 2>/dev/null || true
+-                echo "  Fixed: $(basename "$f"): $dep_path -> @loader_path/../libcrypto.3.dylib"
+-            fi
+-        done < <(otool -L "$f" | tail -n +2)
+-        echo "  Bundled: ossl-modules/$(basename "$f")"
+-    done
+-else
+-    echo "  WARNING: $DEPS_LIB/ossl-modules/ not found!"
+-    echo "  NTLM/NLA authentication will fail without the legacy provider."
+-    echo "  Rebuild OpenSSL with: bash build-freerdp.sh --clean && bash build-freerdp.sh"
+-fi
+-
+-# ── Fix rpaths ───────────────────────────────────────────────────────
+-
+-echo ""
+-echo "Fixing rpaths..."
+-
+-# Bundled basenames are looked up via dylib_has_name (the DYLIB_NAMES array).
+-
+-# Fix a single file: rewrite all references to bundled libs to @loader_path/
+-fix_references() {
+-    local file="$1"
+-    local file_name
+-    file_name=$(basename "$file")
+-
+-    while IFS= read -r line; do
+-        local dep_path
+-        dep_path=$(echo "$line" | awk '{print $1}')
+-        [ -z "$dep_path" ] && continue
+-
+-        local dep_name
+-        dep_name=$(basename "$dep_path")
+-
+-        # If this dep is one of our bundled libs and not already @loader_path
+-        if dylib_has_name "$dep_name" && [[ "$dep_path" != @loader_path/* ]]; then
+-            install_name_tool -change "$dep_path" "@loader_path/$dep_name" "$file" 2>/dev/null || true
+-            echo "  $file_name: $dep_path -> @loader_path/$dep_name"
+-        fi
+-    done < <(otool -L "$file" | tail -n +2)
+-}
+-
+-# Remove all non-portable rpaths from the binary, then add @loader_path
+-echo "Cleaning rpaths from binary..."
+-while IFS= read -r rp; do
+-    rp=$(echo "$rp" | xargs)
+-    [ -z "$rp" ] && continue
+-    case "$rp" in
+-        @loader_path*|@executable_path*) ;;
+-        *)
+-            install_name_tool -delete_rpath "$rp" "$BUNDLE_DIR/conduit-freerdp" 2>/dev/null || true
+-            echo "  Removed rpath: $rp"
+-            ;;
+-    esac
+-done < <(otool -l "$BUNDLE_DIR/conduit-freerdp" | grep -A2 LC_RPATH | grep "path " | sed 's/^[[:space:]]*path //' | sed 's/ (offset.*//')
+-install_name_tool -add_rpath @loader_path "$BUNDLE_DIR/conduit-freerdp" 2>/dev/null || true
+-
+-# Fix the binary
+-echo "Fixing binary references..."
+-fix_references "$BUNDLE_DIR/conduit-freerdp"
+-
+-# Fix each dylib
+-echo "Fixing dylib references..."
+-for name in "${DYLIB_NAMES[@]}"; do
+-    if [ -f "$BUNDLE_DIR/$name" ]; then
+-        # Set the install name to @loader_path/
+-        install_name_tool -id "@loader_path/$name" "$BUNDLE_DIR/$name" 2>/dev/null || true
+-        fix_references "$BUNDLE_DIR/$name"
+-    fi
+-done
+-
+-# ── Ad-hoc sign everything (required for macOS Sequoia) ──────────────
+-
+-echo ""
+-echo "Ad-hoc signing..."
+-for f in "$BUNDLE_DIR"/*; do
+-    codesign --force --sign - "$f" 2>/dev/null || true
+-    echo "  Signed: $(basename "$f")"
+-done
+-for f in "$BUNDLE_DIR"/ossl-modules/*.dylib; do
+-    [ -f "$f" ] || continue
+-    codesign --force --sign - "$f" 2>/dev/null || true
+-    echo "  Signed: ossl-modules/$(basename "$f")"
+-done
+-
+-# ── Verify ───────────────────────────────────────────────────────────
+-
+-echo ""
+-echo "=== Bundle complete ==="
+-echo "Bundle dir: $BUNDLE_DIR"
+-ls -lh "$BUNDLE_DIR"
+-
+-echo ""
+-echo "Verifying binary references (should all be @loader_path/ or /usr/lib/ or /System/):"
+-otool -L "$BUNDLE_DIR/conduit-freerdp"
+-
+-echo ""
+-echo "Checking for remaining non-system references..."
+-REMAINING=0
+-for f in "$BUNDLE_DIR"/*; do
+-    while IFS= read -r line; do
+-        dep_path=$(echo "$line" | awk '{print $1}')
+-        case "$dep_path" in
+-            /usr/lib/*|/System/*|@loader_path/*|@executable_path/*) ;;
+-            *)
+-                if [ -n "$dep_path" ]; then
+-                    echo "  WARNING: $(basename "$f") -> $dep_path"
+-                    REMAINING=$((REMAINING + 1))
+-                fi
+-                ;;
+-        esac
+-    done < <(otool -L "$f" | tail -n +2)
+-done
+-
+-if [ "$REMAINING" -eq 0 ]; then
+-    echo "  All references resolved!"
+-else
+-    echo "  $REMAINING unresolved references (may cause runtime errors on machines without these libs)"
+-fi
+diff --git a/freerdp-helper/src/connection.c b/freerdp-helper/src/connection.c
+index 10878c4..1ab9458 100644
+--- a/freerdp-helper/src/connection.c
++++ b/freerdp-helper/src/connection.c
+@@ -329,6 +329,9 @@ freerdp *connection_init(const ConnectConfig *config) {
+     /* ── Connection ── */
+     freerdp_settings_set_string(settings, FreeRDP_ServerHostname, config->host);
+     freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, (UINT32)config->port);
++    /* RDP is a direct TCP connection. Do not inherit HTTPS proxy variables from
++     * the MCP server process, because FreeRDP otherwise treats them as an RDP proxy. */
++    freerdp_settings_set_uint32(settings, FreeRDP_ProxyType, PROXY_TYPE_IGNORE);
+     freerdp_settings_set_string(settings, FreeRDP_Username, config->username);
+     freerdp_settings_set_string(settings, FreeRDP_Password, config->password);
+     if (config->domain && config->domain[0]) {
+diff --git a/freerdp-helper/src/input.c b/freerdp-helper/src/input.c
+index 75f93ad..d16f621 100644
+--- a/freerdp-helper/src/input.c
++++ b/freerdp-helper/src/input.c
+@@ -9,6 +9,7 @@
+ 
+ #include "input.h"
+ #include <freerdp/input.h>
++#include <freerdp/scancode.h>
+ #include <winpr/synch.h>
+ 
+ static CRITICAL_SECTION s_input_mutex;
+@@ -89,26 +90,52 @@ void input_mouse_scroll(freerdp *instance, int x, int y, int delta, bool vertica
+     LeaveCriticalSection(&s_input_mutex);
+ }
+ 
+-void input_key_down(freerdp *instance, int scancode, bool extended) {
+-    if (!instance || !instance->context || !instance->context->input) return;
++bool input_key_down(freerdp *instance, int scancode, bool extended) {
++    if (!instance || !instance->context || !instance->context->input) return false;
++    if (scancode <= 0 || scancode > 0xFF) return false;
+ 
+-    UINT16 flags = KBD_FLAGS_DOWN;
+-    if (extended) flags |= KBD_FLAGS_EXTENDED;
++    const UINT32 rdp_scancode =
++        MAKE_RDP_SCANCODE((UINT8)scancode, extended ? TRUE : FALSE);
+ 
+     EnterCriticalSection(&s_input_mutex);
+-    freerdp_input_send_keyboard_event(instance->context->input,
+-                                      flags, (UINT8)scancode);
++    const BOOL sent = freerdp_input_send_keyboard_event_ex(
++        instance->context->input, TRUE, FALSE, rdp_scancode);
+     LeaveCriticalSection(&s_input_mutex);
++    return sent != FALSE;
+ }
+ 
+-void input_key_up(freerdp *instance, int scancode, bool extended) {
+-    if (!instance || !instance->context || !instance->context->input) return;
++bool input_key_up(freerdp *instance, int scancode, bool extended) {
++    if (!instance || !instance->context || !instance->context->input) return false;
++    if (scancode <= 0 || scancode > 0xFF) return false;
++
++    const UINT32 rdp_scancode =
++        MAKE_RDP_SCANCODE((UINT8)scancode, extended ? TRUE : FALSE);
++
++    EnterCriticalSection(&s_input_mutex);
++    const BOOL sent = freerdp_input_send_keyboard_event_ex(
++        instance->context->input, FALSE, FALSE, rdp_scancode);
++    LeaveCriticalSection(&s_input_mutex);
++    return sent != FALSE;
++}
++
++bool input_unicode_key_down(freerdp *instance, int code_unit) {
++    if (!instance || !instance->context || !instance->context->input) return false;
++    if (code_unit <= 0 || code_unit > 0xFFFF) return false;
++
++    EnterCriticalSection(&s_input_mutex);
++    const BOOL sent = freerdp_input_send_unicode_keyboard_event(
++        instance->context->input, 0, (UINT16)code_unit);
++    LeaveCriticalSection(&s_input_mutex);
++    return sent != FALSE;
++}
+ 
+-    UINT16 flags = KBD_FLAGS_RELEASE;
+-    if (extended) flags |= KBD_FLAGS_EXTENDED;
++bool input_unicode_key_up(freerdp *instance, int code_unit) {
++    if (!instance || !instance->context || !instance->context->input) return false;
++    if (code_unit <= 0 || code_unit > 0xFFFF) return false;
+ 
+     EnterCriticalSection(&s_input_mutex);
+-    freerdp_input_send_keyboard_event(instance->context->input,
+-                                      flags, (UINT8)scancode);
++    const BOOL sent = freerdp_input_send_unicode_keyboard_event(
++        instance->context->input, KBD_FLAGS_RELEASE, (UINT16)code_unit);
+     LeaveCriticalSection(&s_input_mutex);
++    return sent != FALSE;
+ }
+diff --git a/freerdp-helper/src/input.h b/freerdp-helper/src/input.h
+index 40a810e..3c29a09 100644
+--- a/freerdp-helper/src/input.h
++++ b/freerdp-helper/src/input.h
+@@ -40,11 +40,17 @@ void input_mouse_scroll(freerdp *instance, int x, int y, int delta, bool vertica
+ /**
+  * Send key down event (PS/2 scancode).
+  */
+-void input_key_down(freerdp *instance, int scancode, bool extended);
++bool input_key_down(freerdp *instance, int scancode, bool extended);
+ 
+ /**
+  * Send key up event (PS/2 scancode).
+  */
+-void input_key_up(freerdp *instance, int scancode, bool extended);
++bool input_key_up(freerdp *instance, int scancode, bool extended);
++
++/**
++ * Send a UTF-16 code unit as a Unicode keyboard event.
++ */
++bool input_unicode_key_down(freerdp *instance, int code_unit);
++bool input_unicode_key_up(freerdp *instance, int code_unit);
+ 
+ #endif /* INPUT_H */
+diff --git a/freerdp-helper/src/launcher.c b/freerdp-helper/src/launcher.c
+new file mode 100644
+index 0000000..c6f3158
+--- /dev/null
++++ b/freerdp-helper/src/launcher.c
+@@ -0,0 +1,13 @@
++/** Minimal C entry point for the Rust static library. */
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++int rdp_mcp_main(int argc, const char *const *argv);
++#ifdef __cplusplus
++}
++#endif
++
++int main(int argc, char **argv) {
++    return rdp_mcp_main(argc, (const char *const *)argv);
++}
+diff --git a/freerdp-helper/src/library.c b/freerdp-helper/src/library.c
+new file mode 100644
+index 0000000..073cc03
+--- /dev/null
++++ b/freerdp-helper/src/library.c
+@@ -0,0 +1,331 @@
++/**
++ * In-process library adapter for conduit-desktop's freerdp-helper.
++ *
++ * Modified for rdp-mcp: commands arrive through a C ABI instead of stdin and
++ * output is delivered through a callback instead of a binary stdout stream.
++ */
++
++#include "library.h"
++
++#include "cliprdr.h"
++#include "cliprdr_file.h"
++#ifdef _WIN32
++#include "cliprdr_win32.h"
++#endif
++#include "connection.h"
++#include "disp.h"
++#include "input.h"
++#include "output.h"
++#include "protocol.h"
++
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++
++#include <winpr/synch.h>
++#include <winpr/thread.h>
++
++#ifdef _WIN32
++#include <winsock2.h>
++#include <ws2tcpip.h>
++#endif
++
++#define RDP_MCP_NATIVE_ABI_VERSION 1U
++
++static freerdp *g_instance = NULL;
++static volatile bool g_initialized = false;
++static volatile bool g_running = false;
++static volatile bool g_connected = false;
++static HANDLE g_event_thread = NULL;
++
++static void disable_inherited_web_proxies(void) {
++    static const char *variables[] = {
++        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
++        "http_proxy", "https_proxy", "all_proxy",
++    };
++
++    for (size_t index = 0; index < sizeof(variables) / sizeof(variables[0]); index++) {
++#ifdef _WIN32
++        SetEnvironmentVariableA(variables[index], NULL);
++#else
++        unsetenv(variables[index]);
++#endif
++    }
++}
++
++static DWORD WINAPI event_loop_thread(LPVOID arg) {
++    freerdp *instance = (freerdp *)arg;
++    int last_diag_gen = 0;
++    int diag_check_countdown = 0;
++
++    while (g_running && g_connected) {
++        if (!connection_check_events(instance)) {
++            g_connected = false;
++            break;
++        }
++        disp_check_pending();
++
++        {
++            int gen = 0;
++            int frames = 0;
++            connection_get_resize_diag(&gen, &frames);
++            if (gen != last_diag_gen) {
++                last_diag_gen = gen;
++                diag_check_countdown = 20;
++            }
++            if (diag_check_countdown > 0) {
++                diag_check_countdown--;
++                if (diag_check_countdown == 0 && frames == 0) {
++                    fprintf(stderr,
++                            "[rdp-mcp-native] no frames received after resize #%d\n",
++                            gen);
++                }
++            }
++        }
++    }
++
++    if (g_running) {
++        output_send_disconnected(NULL);
++    }
++    return 0;
++}
++
++static void stop_connection(void) {
++    g_connected = false;
++
++    if (g_event_thread) {
++        WaitForSingleObject(g_event_thread, INFINITE);
++        CloseHandle(g_event_thread);
++        g_event_thread = NULL;
++    }
++
++    if (g_instance) {
++        connection_free(g_instance);
++        g_instance = NULL;
++    }
++}
++
++static int start_connection(const ConnectConfig *config) {
++    if (g_instance || g_event_thread) {
++        stop_connection();
++    }
++
++    disp_init();
++    cliprdr_init();
++    cliprdr_file_init();
++
++    g_instance = connection_init(config);
++    if (!g_instance) {
++        output_send_error("Failed to initialize FreeRDP");
++        return -3;
++    }
++
++    if (!connection_connect(g_instance)) {
++        connection_free(g_instance);
++        g_instance = NULL;
++        return -4;
++    }
++
++    disp_set_initial_layout(config->width,
++                            config->height,
++                            config->desktop_scale_factor,
++                            config->device_scale_factor);
++
++    g_connected = true;
++    g_event_thread = CreateThread(NULL, 0, event_loop_thread, g_instance, 0, NULL);
++    if (!g_event_thread) {
++        output_send_error("Failed to create FreeRDP event thread");
++        stop_connection();
++        return -5;
++    }
++    return 0;
++}
++
++int rdp_mcp_native_initialize(rdp_mcp_native_output_fn callback, void *user_data) {
++    if (!callback) return -1;
++    if (g_initialized) return -2;
++
++    /* FreeRDP consults web-proxy environment variables during parts of its
++     * transport setup even for direct RDP connections. This standalone
++     * process does not make outbound HTTP requests, so remove them before any
++     * FreeRDP or WinPR state is initialized. */
++    disable_inherited_web_proxies();
++
++#ifdef _WIN32
++    {
++        WSADATA wsa_data;
++        if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) return -3;
++    }
++#endif
++
++    output_init_callback((output_callback_fn)callback, user_data);
++    input_init();
++
++#ifdef _WIN32
++    cliprdr_win32_init();
++#endif
++
++    g_running = true;
++    g_connected = false;
++    g_initialized = true;
++    return 0;
++}
++
++int rdp_mcp_native_command(const char *json_command) {
++    Command cmd;
++    int result = 0;
++
++    if (!g_initialized || !g_running || !json_command) return -1;
++    if (!protocol_parse_command(json_command, &cmd)) return -2;
++
++    switch (cmd.type) {
++        case CMD_CONNECT:
++            if (g_connected) {
++                output_send_error("Already connected");
++                result = -3;
++            } else {
++                result = start_connection(&cmd.data.connect);
++            }
++            break;
++
++        case CMD_DISCONNECT:
++            stop_connection();
++            break;
++
++        case CMD_MOUSE_MOVE:
++            if (g_connected && g_instance) {
++                input_mouse_move(g_instance, cmd.data.mouse_move.x, cmd.data.mouse_move.y);
++            }
++            break;
++
++        case CMD_MOUSE_BUTTON_DOWN:
++            if (g_connected && g_instance) {
++                input_mouse_button_down(g_instance,
++                                        cmd.data.mouse_button.x,
++                                        cmd.data.mouse_button.y,
++                                        cmd.data.mouse_button.button);
++            }
++            break;
++
++        case CMD_MOUSE_BUTTON_UP:
++            if (g_connected && g_instance) {
++                input_mouse_button_up(g_instance,
++                                      cmd.data.mouse_button.x,
++                                      cmd.data.mouse_button.y,
++                                      cmd.data.mouse_button.button);
++            }
++            break;
++
++        case CMD_MOUSE_SCROLL:
++            if (g_connected && g_instance) {
++                input_mouse_scroll(g_instance,
++                                   cmd.data.mouse_scroll.x,
++                                   cmd.data.mouse_scroll.y,
++                                   cmd.data.mouse_scroll.delta,
++                                   cmd.data.mouse_scroll.vertical);
++            }
++            break;
++
++        case CMD_KEY_DOWN:
++            if (g_connected && g_instance) {
++                result = input_key_down(g_instance,
++                                        cmd.data.key.scancode,
++                                        cmd.data.key.extended) ? 0 : -7;
++            }
++            break;
++
++        case CMD_KEY_UP:
++            if (g_connected && g_instance) {
++                result = input_key_up(g_instance,
++                                      cmd.data.key.scancode,
++                                      cmd.data.key.extended) ? 0 : -7;
++            }
++            break;
++
++        case CMD_UNICODE_KEY_DOWN:
++            if (g_connected && g_instance) {
++                result = input_unicode_key_down(
++                    g_instance, cmd.data.unicode_key.code_unit) ? 0 : -7;
++            }
++            break;
++
++        case CMD_UNICODE_KEY_UP:
++            if (g_connected && g_instance) {
++                result = input_unicode_key_up(
++                    g_instance, cmd.data.unicode_key.code_unit) ? 0 : -7;
++            }
++            break;
++
++        case CMD_RESIZE:
++            if (g_connected && g_instance) {
++                disp_request_resize(cmd.data.resize.width,
++                                    cmd.data.resize.height,
++                                    cmd.data.resize.desktop_scale_factor,
++                                    cmd.data.resize.device_scale_factor);
++            }
++            break;
++
++        case CMD_CLIPBOARD_SET:
++            if (g_connected && g_instance) {
++#ifdef _WIN32
++                if (!cliprdr_win32_is_active())
++#endif
++                {
++                    cliprdr_set_text(cmd.data.clipboard_set.text,
++                                     cmd.data.clipboard_set.length);
++                }
++            }
++            break;
++
++        case CMD_CLIPBOARD_SET_FILES:
++            if (g_connected && g_instance) {
++#ifdef _WIN32
++                if (!cliprdr_win32_is_active())
++#endif
++                {
++                    cliprdr_file_set_local_files(cmd.data.clipboard_set_files.json);
++                    cliprdr_announce_files();
++                }
++            }
++            break;
++
++        case CMD_CLIPBOARD_REQUEST_FILES:
++            if (g_connected && g_instance) {
++                cliprdr_file_request_download(cmd.data.clipboard_request_files.temp_dir);
++            }
++            break;
++
++        case CMD_UNKNOWN:
++        default:
++            output_send_error("Unknown native command");
++            result = -6;
++            break;
++    }
++
++    protocol_free_command(&cmd);
++    return result;
++}
++
++void rdp_mcp_native_shutdown(void) {
++    if (!g_initialized) return;
++
++    g_running = false;
++    stop_connection();
++    cliprdr_file_cleanup();
++
++#ifdef _WIN32
++    cliprdr_win32_cleanup();
++    WSACleanup();
++#endif
++
++    output_cleanup();
++    g_initialized = false;
++}
++
++int rdp_mcp_native_is_connected(void) {
++    return g_connected ? 1 : 0;
++}
++
++uint32_t rdp_mcp_native_abi_version(void) {
++    return RDP_MCP_NATIVE_ABI_VERSION;
++}
+diff --git a/freerdp-helper/src/library.h b/freerdp-helper/src/library.h
+new file mode 100644
+index 0000000..cd8ec4f
+--- /dev/null
++++ b/freerdp-helper/src/library.h
+@@ -0,0 +1,44 @@
++/**
++ * rdp-mcp native C ABI.
++ *
++ * This file adapts conduit-desktop's freerdp-helper into an in-process static
++ * library. The current upstream helper is process-global, so one active RDP
++ * connection is supported per rdp-mcp process.
++ */
++
++#ifndef RDP_MCP_NATIVE_LIBRARY_H
++#define RDP_MCP_NATIVE_LIBRARY_H
++
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef void (*rdp_mcp_native_output_fn)(uint32_t type,
++                                         const void *part_a,
++                                         uint32_t part_a_length,
++                                         const void *part_b,
++                                         uint32_t part_b_length,
++                                         void *user_data);
++
++/** Initialize the native runtime and register its output callback. */
++int rdp_mcp_native_initialize(rdp_mcp_native_output_fn callback, void *user_data);
++
++/** Parse and execute one NUL-terminated UTF-8 helper protocol command. */
++int rdp_mcp_native_command(const char *json_command);
++
++/** Disconnect and release all native runtime resources. */
++void rdp_mcp_native_shutdown(void);
++
++/** Return non-zero while the RDP transport is connected. */
++int rdp_mcp_native_is_connected(void);
++
++/** Return the stable ABI version implemented by this library. */
++uint32_t rdp_mcp_native_abi_version(void);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* RDP_MCP_NATIVE_LIBRARY_H */
+diff --git a/freerdp-helper/src/main.c b/freerdp-helper/src/main.c
+index 75964e0..37361ec 100644
+--- a/freerdp-helper/src/main.c
++++ b/freerdp-helper/src/main.c
+@@ -216,6 +216,20 @@ static void command_loop(void) {
+                 }
+                 break;
+ 
++            case CMD_UNICODE_KEY_DOWN:
++                if (g_connected && g_instance) {
++                    input_unicode_key_down(g_instance,
++                                           cmd.data.unicode_key.code_unit);
++                }
++                break;
++
++            case CMD_UNICODE_KEY_UP:
++                if (g_connected && g_instance) {
++                    input_unicode_key_up(g_instance,
++                                         cmd.data.unicode_key.code_unit);
++                }
++                break;
++
+             case CMD_RESIZE:
+                 if (g_connected && g_instance) {
+                     disp_request_resize(cmd.data.resize.width, cmd.data.resize.height,
+diff --git a/freerdp-helper/src/output.c b/freerdp-helper/src/output.c
+index a6885c1..9dc550b 100644
+--- a/freerdp-helper/src/output.c
++++ b/freerdp-helper/src/output.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include "output.h"
++#include <stdbool.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -27,12 +28,24 @@
+ #endif
+ 
+ static CRITICAL_SECTION output_mutex;
++static bool g_output_initialized = false;
+ 
+ /** Dedicated FILE* for binary protocol output (original stdout before redirect) */
+ static FILE *g_binary_out = NULL;
++static output_callback_fn g_output_callback = NULL;
++static void *g_output_user_data = NULL;
++
++static void output_init_mutex(void) {
++    if (!g_output_initialized) {
++        InitializeCriticalSection(&output_mutex);
++        g_output_initialized = true;
++    }
++}
+ 
+ void output_init(void) {
+-    InitializeCriticalSection(&output_mutex);
++    output_init_mutex();
++    g_output_callback = NULL;
++    g_output_user_data = NULL;
+ 
+     /*
+      * FreeRDP3's default WLog console appender writes to stdout.
+@@ -64,11 +77,40 @@ void output_init(void) {
+     setvbuf(g_binary_out, NULL, _IONBF, 0);
+ }
+ 
++void output_init_callback(output_callback_fn callback, void *user_data) {
++    output_init_mutex();
++    g_binary_out = NULL;
++    g_output_callback = callback;
++    g_output_user_data = user_data;
++}
++
++void output_cleanup(void) {
++    if (!g_output_initialized) return;
++
++    EnterCriticalSection(&output_mutex);
++    if (g_binary_out) {
++        fclose(g_binary_out);
++        g_binary_out = NULL;
++    }
++    g_output_callback = NULL;
++    g_output_user_data = NULL;
++    LeaveCriticalSection(&output_mutex);
++
++    DeleteCriticalSection(&output_mutex);
++    g_output_initialized = false;
++}
++
+ void output_send(uint32_t type, const void *payload, uint32_t length) {
+-    if (!g_binary_out) return;
++    if (!g_binary_out && !g_output_callback) return;
+ 
+     EnterCriticalSection(&output_mutex);
+ 
++    if (g_output_callback) {
++        g_output_callback(type, payload, length, NULL, 0, g_output_user_data);
++        LeaveCriticalSection(&output_mutex);
++        return;
++    }
++
+     /* Write header: type (u32-LE) + length (u32-LE) */
+     uint8_t header[8];
+     header[0] = (uint8_t)(type & 0xFF);
+@@ -98,12 +140,32 @@ void output_send_connected(int width, int height) {
+ 
+ void output_send_bitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                         const uint8_t *rgba_data, size_t rgba_len) {
+-    if (!g_binary_out) return;
++    if (!g_binary_out && !g_output_callback) return;
+ 
+     EnterCriticalSection(&output_mutex);
+ 
+     uint32_t payload_len = 8 + (uint32_t)rgba_len;
+ 
++    /* Payload sub-header: [x:u16-LE][y:u16-LE][w:u16-LE][h:u16-LE] */
++    uint8_t sub[8];
++    sub[0] = (uint8_t)(x & 0xFF);
++    sub[1] = (uint8_t)((x >> 8) & 0xFF);
++    sub[2] = (uint8_t)(y & 0xFF);
++    sub[3] = (uint8_t)((y >> 8) & 0xFF);
++    sub[4] = (uint8_t)(w & 0xFF);
++    sub[5] = (uint8_t)((w >> 8) & 0xFF);
++    sub[6] = (uint8_t)(h & 0xFF);
++    sub[7] = (uint8_t)((h >> 8) & 0xFF);
++
++    if (g_output_callback) {
++        g_output_callback(MSG_TYPE_BITMAP_UPDATE,
++                          sub, (uint32_t)sizeof(sub),
++                          rgba_data, (uint32_t)rgba_len,
++                          g_output_user_data);
++        LeaveCriticalSection(&output_mutex);
++        return;
++    }
++
+     /* Message header: [type:u32-LE][length:u32-LE] */
+     uint8_t header[8];
+     uint32_t type = MSG_TYPE_BITMAP_UPDATE;
+@@ -116,17 +178,6 @@ void output_send_bitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+     header[6] = (uint8_t)((payload_len >> 16) & 0xFF);
+     header[7] = (uint8_t)((payload_len >> 24) & 0xFF);
+     fwrite(header, 1, 8, g_binary_out);
+-
+-    /* Payload sub-header: [x:u16-LE][y:u16-LE][w:u16-LE][h:u16-LE] */
+-    uint8_t sub[8];
+-    sub[0] = (uint8_t)(x & 0xFF);
+-    sub[1] = (uint8_t)((x >> 8) & 0xFF);
+-    sub[2] = (uint8_t)(y & 0xFF);
+-    sub[3] = (uint8_t)((y >> 8) & 0xFF);
+-    sub[4] = (uint8_t)(w & 0xFF);
+-    sub[5] = (uint8_t)((w >> 8) & 0xFF);
+-    sub[6] = (uint8_t)(h & 0xFF);
+-    sub[7] = (uint8_t)((h >> 8) & 0xFF);
+     fwrite(sub, 1, 8, g_binary_out);
+ 
+     /* RGBA pixel data — written directly from caller's buffer (zero-copy) */
+@@ -187,12 +238,32 @@ void output_send_clipboard_native(void) {
+ void output_send_cursor(uint16_t hotspotX, uint16_t hotspotY,
+                         uint16_t width, uint16_t height,
+                         const uint8_t *rgba_data, size_t rgba_len) {
+-    if (!g_binary_out || !rgba_data || rgba_len == 0) return;
++    if ((!g_binary_out && !g_output_callback) || !rgba_data || rgba_len == 0) return;
+ 
+     EnterCriticalSection(&output_mutex);
+ 
+     uint32_t payload_len = 8 + (uint32_t)rgba_len;
+ 
++    /* Payload sub-header: [hotspotX:u16-LE][hotspotY:u16-LE][width:u16-LE][height:u16-LE] */
++    uint8_t sub[8];
++    sub[0] = (uint8_t)(hotspotX & 0xFF);
++    sub[1] = (uint8_t)((hotspotX >> 8) & 0xFF);
++    sub[2] = (uint8_t)(hotspotY & 0xFF);
++    sub[3] = (uint8_t)((hotspotY >> 8) & 0xFF);
++    sub[4] = (uint8_t)(width & 0xFF);
++    sub[5] = (uint8_t)((width >> 8) & 0xFF);
++    sub[6] = (uint8_t)(height & 0xFF);
++    sub[7] = (uint8_t)((height >> 8) & 0xFF);
++
++    if (g_output_callback) {
++        g_output_callback(MSG_TYPE_CURSOR_SET,
++                          sub, (uint32_t)sizeof(sub),
++                          rgba_data, (uint32_t)rgba_len,
++                          g_output_user_data);
++        LeaveCriticalSection(&output_mutex);
++        return;
++    }
++
+     /* Message header: [type:u32-LE][length:u32-LE] */
+     uint8_t header[8];
+     uint32_t type = MSG_TYPE_CURSOR_SET;
+@@ -205,17 +276,6 @@ void output_send_cursor(uint16_t hotspotX, uint16_t hotspotY,
+     header[6] = (uint8_t)((payload_len >> 16) & 0xFF);
+     header[7] = (uint8_t)((payload_len >> 24) & 0xFF);
+     fwrite(header, 1, 8, g_binary_out);
+-
+-    /* Payload sub-header: [hotspotX:u16-LE][hotspotY:u16-LE][width:u16-LE][height:u16-LE] */
+-    uint8_t sub[8];
+-    sub[0] = (uint8_t)(hotspotX & 0xFF);
+-    sub[1] = (uint8_t)((hotspotX >> 8) & 0xFF);
+-    sub[2] = (uint8_t)(hotspotY & 0xFF);
+-    sub[3] = (uint8_t)((hotspotY >> 8) & 0xFF);
+-    sub[4] = (uint8_t)(width & 0xFF);
+-    sub[5] = (uint8_t)((width >> 8) & 0xFF);
+-    sub[6] = (uint8_t)(height & 0xFF);
+-    sub[7] = (uint8_t)((height >> 8) & 0xFF);
+     fwrite(sub, 1, 8, g_binary_out);
+ 
+     /* RGBA pixel data */
+diff --git a/freerdp-helper/src/output.h b/freerdp-helper/src/output.h
+index afc52be..860f955 100644
+--- a/freerdp-helper/src/output.h
++++ b/freerdp-helper/src/output.h
+@@ -40,6 +40,16 @@
+ #define MSG_TYPE_CURSOR_DEFAULT          0x0D
+ #define MSG_TYPE_ERROR                   0xFF
+ 
++/**
++ * Library output callback. Payloads are split into two buffers so bitmap and
++ * cursor pixels can be forwarded without allocating another full frame.
++ * Buffers are borrowed and remain valid only for the duration of the callback.
++ */
++typedef void (*output_callback_fn)(uint32_t type,
++                                   const void *part_a, uint32_t part_a_length,
++                                   const void *part_b, uint32_t part_b_length,
++                                   void *user_data);
++
+ /**
+  * Send a binary-framed message to stdout.
+  * Thread-safe (uses internal mutex).
+@@ -125,4 +135,10 @@ void output_send_cursor_default(void);
+  */
+ void output_init(void);
+ 
++/** Initialize output for an embedded library consumer. */
++void output_init_callback(output_callback_fn callback, void *user_data);
++
++/** Release output resources. */
++void output_cleanup(void);
++
+ #endif /* OUTPUT_H */
+diff --git a/freerdp-helper/src/protocol.c b/freerdp-helper/src/protocol.c
+index b7c79db..31f331b 100644
+--- a/freerdp-helper/src/protocol.c
++++ b/freerdp-helper/src/protocol.c
+@@ -43,9 +43,16 @@ bool protocol_read_command(Command *cmd) {
+ 
+     if (strlen(line) == 0) return false;
+ 
+-    cJSON *json = cJSON_Parse(line);
++    return protocol_parse_command(line, cmd);
++}
++
++bool protocol_parse_command(const char *json_text, Command *cmd) {
++    if (!json_text || !cmd || json_text[0] == '\0') return false;
++
++    cJSON *json = cJSON_Parse(json_text);
+     if (!json) {
+-        fprintf(stderr, "[conduit-freerdp] Failed to parse JSON: %s\n", line);
++        fprintf(stderr, "[rdp-mcp-native] Failed to parse JSON command\n");
++        memset(cmd, 0, sizeof(Command));
+         cmd->type = CMD_UNKNOWN;
+         return true;
+     }
+@@ -126,6 +133,12 @@ bool protocol_read_command(Command *cmd) {
+         cmd->type = CMD_KEY_UP;
+         cmd->data.key.scancode = cjson_get_int(json, "scancode", 0);
+         cmd->data.key.extended = cjson_get_bool(json, "extended", false);
++    } else if (strcmp(type, "unicode_key_down") == 0) {
++        cmd->type = CMD_UNICODE_KEY_DOWN;
++        cmd->data.unicode_key.code_unit = cjson_get_int(json, "code_unit", 0);
++    } else if (strcmp(type, "unicode_key_up") == 0) {
++        cmd->type = CMD_UNICODE_KEY_UP;
++        cmd->data.unicode_key.code_unit = cjson_get_int(json, "code_unit", 0);
+     } else if (strcmp(type, "resize") == 0) {
+         cmd->type = CMD_RESIZE;
+         cmd->data.resize.width = cjson_get_int(json, "width", 1920);
+diff --git a/freerdp-helper/src/protocol.h b/freerdp-helper/src/protocol.h
+index 932fdb5..243ccb2 100644
+--- a/freerdp-helper/src/protocol.h
++++ b/freerdp-helper/src/protocol.h
+@@ -20,6 +20,8 @@ typedef enum {
+     CMD_MOUSE_SCROLL,
+     CMD_KEY_DOWN,
+     CMD_KEY_UP,
++    CMD_UNICODE_KEY_DOWN,
++    CMD_UNICODE_KEY_UP,
+     CMD_RESIZE,
+     CMD_CLIPBOARD_SET,
+     CMD_CLIPBOARD_SET_FILES,
+@@ -62,6 +64,7 @@ typedef struct {
+         struct { int x; int y; int button; } mouse_button;
+         struct { int x; int y; int delta; bool vertical; } mouse_scroll;
+         struct { int scancode; bool extended; } key;
++        struct { int code_unit; } unicode_key;
+         struct { int width; int height; int desktop_scale_factor; int device_scale_factor; } resize;
+         struct { char *text; int length; } clipboard_set;
+         struct { char *json; } clipboard_set_files;
+@@ -75,6 +78,12 @@ typedef struct {
+  */
+ bool protocol_read_command(Command *cmd);
+ 
++/**
++ * Parse one UTF-8 JSON command from memory.
++ * Returns true when a command object was produced, including CMD_UNKNOWN.
++ */
++bool protocol_parse_command(const char *json_text, Command *cmd);
++
+ /**
+  * Free any dynamically allocated data in a command.
+  */

@@ -20,6 +20,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <winpr/synch.h>
 #include <winpr/thread.h>
@@ -36,6 +37,21 @@ static volatile bool g_initialized = false;
 static volatile bool g_running = false;
 static volatile bool g_connected = false;
 static HANDLE g_event_thread = NULL;
+
+static void disable_inherited_web_proxies(void) {
+    static const char *variables[] = {
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "all_proxy",
+    };
+
+    for (size_t index = 0; index < sizeof(variables) / sizeof(variables[0]); index++) {
+#ifdef _WIN32
+        SetEnvironmentVariableA(variables[index], NULL);
+#else
+        unsetenv(variables[index]);
+#endif
+    }
+}
 
 static DWORD WINAPI event_loop_thread(LPVOID arg) {
     freerdp *instance = (freerdp *)arg;
@@ -129,6 +145,12 @@ int rdp_mcp_native_initialize(rdp_mcp_native_output_fn callback, void *user_data
     if (!callback) return -1;
     if (g_initialized) return -2;
 
+    /* FreeRDP consults web-proxy environment variables during parts of its
+     * transport setup even for direct RDP connections. This standalone
+     * process does not make outbound HTTP requests, so remove them before any
+     * FreeRDP or WinPR state is initialized. */
+    disable_inherited_web_proxies();
+
 #ifdef _WIN32
     {
         WSADATA wsa_data;
@@ -206,13 +228,31 @@ int rdp_mcp_native_command(const char *json_command) {
 
         case CMD_KEY_DOWN:
             if (g_connected && g_instance) {
-                input_key_down(g_instance, cmd.data.key.scancode, cmd.data.key.extended);
+                result = input_key_down(g_instance,
+                                        cmd.data.key.scancode,
+                                        cmd.data.key.extended) ? 0 : -7;
             }
             break;
 
         case CMD_KEY_UP:
             if (g_connected && g_instance) {
-                input_key_up(g_instance, cmd.data.key.scancode, cmd.data.key.extended);
+                result = input_key_up(g_instance,
+                                      cmd.data.key.scancode,
+                                      cmd.data.key.extended) ? 0 : -7;
+            }
+            break;
+
+        case CMD_UNICODE_KEY_DOWN:
+            if (g_connected && g_instance) {
+                result = input_unicode_key_down(
+                    g_instance, cmd.data.unicode_key.code_unit) ? 0 : -7;
+            }
+            break;
+
+        case CMD_UNICODE_KEY_UP:
+            if (g_connected && g_instance) {
+                result = input_unicode_key_up(
+                    g_instance, cmd.data.unicode_key.code_unit) ? 0 : -7;
             }
             break;
 

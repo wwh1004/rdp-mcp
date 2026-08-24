@@ -133,6 +133,12 @@ bool protocol_parse_command(const char *json_text, Command *cmd) {
         cmd->type = CMD_KEY_UP;
         cmd->data.key.scancode = cjson_get_int(json, "scancode", 0);
         cmd->data.key.extended = cjson_get_bool(json, "extended", false);
+    } else if (strcmp(type, "unicode_key_down") == 0) {
+        cmd->type = CMD_UNICODE_KEY_DOWN;
+        cmd->data.unicode_key.code_unit = cjson_get_int(json, "code_unit", 0);
+    } else if (strcmp(type, "unicode_key_up") == 0) {
+        cmd->type = CMD_UNICODE_KEY_UP;
+        cmd->data.unicode_key.code_unit = cjson_get_int(json, "code_unit", 0);
     } else if (strcmp(type, "resize") == 0) {
         cmd->type = CMD_RESIZE;
         cmd->data.resize.width = cjson_get_int(json, "width", 1920);

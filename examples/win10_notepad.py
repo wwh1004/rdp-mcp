@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Verify rdp-mcp against Windows 10 through the MCP stdio protocol.
+"""Run and document a complete Windows 10 workflow through MCP stdio.
 
-The script opens the Run dialog, launches Notepad, types ``Hello World!``, and
-saves screenshots plus a redacted JSON operation log for every visible step.
-It uses only the Python standard library.
+The script opens Edge, visits Downloads in Explorer, removes any prior test
+file, creates ``helloworld.txt`` through Win+R and Notepad, writes and saves
+``Hello World!``, and reopens the file from disk. It saves a screenshot for
+every visible stage plus a redacted JSON operation log. Only the Python
+standard library is required.
 """
 
 from __future__ import annotations
@@ -50,7 +52,8 @@ class McpStdioClient:
             encoding="utf-8",
             bufsize=1,
         )
-        threading.Thread(target=self._read_stderr, daemon=True).start()
+        self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stderr_thread.start()
 
     def _read_stderr(self) -> None:
         assert self.process.stderr is not None
@@ -111,6 +114,7 @@ class McpStdioClient:
         except subprocess.TimeoutExpired:
             self.process.terminate()
             self.process.wait(timeout=5)
+        self._stderr_thread.join(timeout=5)
 
 
 class Recorder:
@@ -263,9 +267,38 @@ def run(args: argparse.Namespace) -> Path:
             },
         )
         connection_id = str(opened["id"])
-        time.sleep(2)
+        time.sleep(8)
+
+        for modifier in ("Control", "Shift", "Alt", "Windows"):
+            call(
+                recorder,
+                client,
+                "rdp_send_key",
+                f"Release any stale {modifier} state",
+                {
+                    "connection_id": connection_id,
+                    "key": modifier,
+                    "action": "up",
+                },
+            )
+
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Create an isolated virtual desktop with Ctrl+Win+D",
+            {
+                "connection_id": connection_id,
+                "key": "d",
+                "modifiers": ["ctrl", "meta"],
+            },
+        )
+        time.sleep(10)
         recorder.screenshot(
-            client, connection_id, "01-connected.jpg", "Initial Windows desktop"
+            client,
+            connection_id,
+            "01-connected-desktop.jpg",
+            "Connected Windows desktop",
         )
 
         call(
@@ -275,31 +308,254 @@ def run(args: argparse.Namespace) -> Path:
             "Open the Windows Run dialog with Win+R",
             {"connection_id": connection_id, "key": "r", "modifiers": ["meta"]},
         )
-        time.sleep(1)
+        time.sleep(12)
         recorder.screenshot(
-            client, connection_id, "02-run-dialog.jpg", "Windows Run dialog opened"
+            client,
+            connection_id,
+            "02-browser-run-dialog.jpg",
+            "Run dialog opened for the browser",
         )
 
         call(
             recorder,
             client,
-            "rdp_type",
-            "Type the Notepad command",
-            {"connection_id": connection_id, "text": "notepad", "delay_ms": 40},
+            "rdp_send_key",
+            "Select any prior Run command before entering the browser command",
+            {"connection_id": connection_id, "key": "a", "modifiers": ["ctrl"]},
         )
+        time.sleep(1)
+
+        call(
+            recorder,
+            client,
+            "rdp_type",
+            "Type the Edge version-page command",
+            {
+                "connection_id": connection_id,
+                "text": "msedge edge://version/",
+                "delay_ms": 40,
+            },
+        )
+        time.sleep(1)
         recorder.screenshot(
-            client, connection_id, "03-notepad-command.jpg", "Notepad command entered"
+            client,
+            connection_id,
+            "03-browser-command.jpg",
+            "Edge command entered in Run",
         )
         call(
             recorder,
             client,
             "rdp_send_key",
-            "Launch Notepad",
+            "Launch Edge",
             {"connection_id": connection_id, "key": "Enter"},
         )
-        time.sleep(2)
+        time.sleep(15)
         recorder.screenshot(
-            client, connection_id, "04-notepad-open.jpg", "Notepad opened"
+            client, connection_id, "04-browser-open.jpg", "Edge browser opened"
+        )
+
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Close Edge with Alt+F4",
+            {
+                "connection_id": connection_id,
+                "key": "F4",
+                "modifiers": ["alt"],
+            },
+        )
+        time.sleep(6)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "05-browser-closed.jpg",
+            "Desktop after closing Edge",
+        )
+
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Open File Explorer with Win+E",
+            {"connection_id": connection_id, "key": "e", "modifiers": ["meta"]},
+        )
+        time.sleep(12)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "06-explorer-open.jpg",
+            "File Explorer opened",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Focus the Explorer address bar",
+            {"connection_id": connection_id, "key": "l", "modifiers": ["ctrl"]},
+        )
+        time.sleep(1)
+        call(
+            recorder,
+            client,
+            "rdp_type",
+            "Enter the Downloads directory",
+            {
+                "connection_id": connection_id,
+                "text": "%USERPROFILE%\\Downloads",
+                "delay_ms": 20,
+            },
+        )
+        time.sleep(1)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "07-downloads-path.jpg",
+            "Downloads path entered in Explorer",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Navigate to Downloads",
+            {"connection_id": connection_id, "key": "Enter"},
+        )
+        time.sleep(5)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "08-downloads-open.jpg",
+            "Explorer showing Downloads",
+        )
+
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Open Run to remove any prior test file",
+            {"connection_id": connection_id, "key": "r", "modifiers": ["meta"]},
+        )
+        time.sleep(12)
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Select any prior Run command before entering the cleanup command",
+            {"connection_id": connection_id, "key": "a", "modifiers": ["ctrl"]},
+        )
+        time.sleep(1)
+        call(
+            recorder,
+            client,
+            "rdp_type",
+            "Enter the command that removes the prior test file",
+            {
+                "connection_id": connection_id,
+                "text": (
+                    'cmd.exe /c del /f /q '
+                    '"%USERPROFILE%\\Downloads\\helloworld.txt"'
+                ),
+                "delay_ms": 15,
+            },
+        )
+        time.sleep(1)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "09-delete-command.jpg",
+            "Cleanup command entered in Run",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Remove any prior helloworld.txt",
+            {"connection_id": connection_id, "key": "Enter"},
+        )
+        time.sleep(8)
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Refresh Downloads after cleanup",
+            {"connection_id": connection_id, "key": "F5"},
+        )
+        time.sleep(5)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "10-downloads-clean.jpg",
+            "Downloads after removing the prior test file",
+        )
+
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Open Run for Notepad",
+            {"connection_id": connection_id, "key": "r", "modifiers": ["meta"]},
+        )
+        time.sleep(12)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "11-notepad-run-dialog.jpg",
+            "Run dialog opened for Notepad",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Select any prior Run command before entering the Notepad command",
+            {"connection_id": connection_id, "key": "a", "modifiers": ["ctrl"]},
+        )
+        time.sleep(1)
+        call(
+            recorder,
+            client,
+            "rdp_type",
+            "Enter the new Downloads file path for Notepad",
+            {
+                "connection_id": connection_id,
+                "text": 'notepad.exe "%USERPROFILE%\\Downloads\\helloworld.txt"',
+                "delay_ms": 20,
+            },
+        )
+        time.sleep(1)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "12-notepad-command.jpg",
+            "Notepad file command entered in Run",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Launch Notepad for the new file",
+            {"connection_id": connection_id, "key": "Enter"},
+        )
+        time.sleep(8)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "13-create-confirmation.jpg",
+            "Notepad asks to create helloworld.txt",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Confirm creation of helloworld.txt",
+            {"connection_id": connection_id, "key": "Enter"},
+        )
+        time.sleep(6)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "14-empty-file.jpg",
+            "New empty helloworld.txt in Notepad",
         )
 
         call(
@@ -313,9 +569,110 @@ def run(args: argparse.Namespace) -> Path:
         recorder.screenshot(
             client,
             connection_id,
-            "05-hello-world.jpg",
+            "15-hello-world-entered.jpg",
             "Notepad contains Hello World!",
         )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Save helloworld.txt with Ctrl+S",
+            {"connection_id": connection_id, "key": "s", "modifiers": ["ctrl"]},
+        )
+        time.sleep(3)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "16-file-saved.jpg",
+            "helloworld.txt saved in Notepad",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Close Notepad",
+            {
+                "connection_id": connection_id,
+                "key": "F4",
+                "modifiers": ["alt"],
+            },
+        )
+        time.sleep(5)
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Refresh Downloads to show the saved file",
+            {"connection_id": connection_id, "key": "F5"},
+        )
+        time.sleep(5)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "17-downloads-file-visible.jpg",
+            "Downloads showing the saved helloworld.txt",
+        )
+
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Focus the Explorer address bar for verification",
+            {"connection_id": connection_id, "key": "l", "modifiers": ["ctrl"]},
+        )
+        time.sleep(1)
+        call(
+            recorder,
+            client,
+            "rdp_type",
+            "Enter the saved helloworld.txt path",
+            {
+                "connection_id": connection_id,
+                "text": "%USERPROFILE%\\Downloads\\helloworld.txt",
+                "delay_ms": 20,
+            },
+        )
+        time.sleep(1)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "18-saved-file-path.jpg",
+            "Saved file path entered in Explorer",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Reopen helloworld.txt from disk",
+            {"connection_id": connection_id, "key": "Enter"},
+        )
+        time.sleep(8)
+        recorder.screenshot(
+            client,
+            connection_id,
+            "19-reopened-content.jpg",
+            "Reopened helloworld.txt contains Hello World!",
+        )
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Close the reopened Notepad after verification",
+            {
+                "connection_id": connection_id,
+                "key": "F4",
+                "modifiers": ["alt"],
+            },
+        )
+        time.sleep(2)
+        call(
+            recorder,
+            client,
+            "rdp_send_key",
+            "Leave the remote desktop in a deterministic minimized state",
+            {"connection_id": connection_id, "key": "m", "modifiers": ["meta"]},
+        )
+        time.sleep(2)
     except Exception as error:
         failure = f"{type(error).__name__}: {error}"
         raise

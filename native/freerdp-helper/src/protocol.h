@@ -20,6 +20,8 @@ typedef enum {
     CMD_MOUSE_SCROLL,
     CMD_KEY_DOWN,
     CMD_KEY_UP,
+    CMD_UNICODE_KEY_DOWN,
+    CMD_UNICODE_KEY_UP,
     CMD_RESIZE,
     CMD_CLIPBOARD_SET,
     CMD_CLIPBOARD_SET_FILES,
@@ -62,6 +64,7 @@ typedef struct {
         struct { int x; int y; int button; } mouse_button;
         struct { int x; int y; int delta; bool vertical; } mouse_scroll;
         struct { int scancode; bool extended; } key;
+        struct { int code_unit; } unicode_key;
         struct { int width; int height; int desktop_scale_factor; int device_scale_factor; } resize;
         struct { char *text; int length; } clipboard_set;
         struct { char *json; } clipboard_set_files;

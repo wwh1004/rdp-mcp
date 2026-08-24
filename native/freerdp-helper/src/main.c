@@ -216,6 +216,20 @@ static void command_loop(void) {
                 }
                 break;
 
+            case CMD_UNICODE_KEY_DOWN:
+                if (g_connected && g_instance) {
+                    input_unicode_key_down(g_instance,
+                                           cmd.data.unicode_key.code_unit);
+                }
+                break;
+
+            case CMD_UNICODE_KEY_UP:
+                if (g_connected && g_instance) {
+                    input_unicode_key_up(g_instance,
+                                         cmd.data.unicode_key.code_unit);
+                }
+                break;
+
             case CMD_RESIZE:
                 if (g_connected && g_instance) {
                     disp_request_resize(cmd.data.resize.width, cmd.data.resize.height,

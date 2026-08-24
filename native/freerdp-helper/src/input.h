@@ -40,11 +40,17 @@ void input_mouse_scroll(freerdp *instance, int x, int y, int delta, bool vertica
 /**
  * Send key down event (PS/2 scancode).
  */
-void input_key_down(freerdp *instance, int scancode, bool extended);
+bool input_key_down(freerdp *instance, int scancode, bool extended);
 
 /**
  * Send key up event (PS/2 scancode).
  */
-void input_key_up(freerdp *instance, int scancode, bool extended);
+bool input_key_up(freerdp *instance, int scancode, bool extended);
+
+/**
+ * Send a UTF-16 code unit as a Unicode keyboard event.
+ */
+bool input_unicode_key_down(freerdp *instance, int code_unit);
+bool input_unicode_key_up(freerdp *instance, int code_unit);
 
 #endif /* INPUT_H */
