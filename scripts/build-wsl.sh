@@ -179,7 +179,10 @@ build_windows_dependencies() {
     # FreeRDP 3.15.0's type probe misdetects the SSIZE_T already supplied by
     # Debian's 32-bit MinGW headers and otherwise emits a conflicting typedef.
     if [ "$target" = "windows-i686" ]; then
-        freerdp_compat_args=(-DHAVE_WIN_SSIZE_T=TRUE)
+        freerdp_compat_args=(
+            -DHAVE_SSIZE_T=FALSE
+            -DHAVE_WIN_SSIZE_T=TRUE
+        )
     fi
 
     for tool in "${triplet}-gcc" "${triplet}-g++" "${triplet}-windres" \
