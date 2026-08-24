@@ -329,6 +329,9 @@ freerdp *connection_init(const ConnectConfig *config) {
     /* ── Connection ── */
     freerdp_settings_set_string(settings, FreeRDP_ServerHostname, config->host);
     freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, (UINT32)config->port);
+    /* RDP is a direct TCP connection. Do not inherit HTTPS proxy variables from
+     * the MCP server process, because FreeRDP otherwise treats them as an RDP proxy. */
+    freerdp_settings_set_uint32(settings, FreeRDP_ProxyType, PROXY_TYPE_IGNORE);
     freerdp_settings_set_string(settings, FreeRDP_Username, config->username);
     freerdp_settings_set_string(settings, FreeRDP_Password, config->password);
     if (config->domain && config->domain[0]) {
