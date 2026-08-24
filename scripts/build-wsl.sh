@@ -172,8 +172,15 @@ build_windows_dependencies() {
     local zlib_source="$deps/zlib-src"
     local zlib_build="$deps/zlib-build"
     local freerdp_build="$deps/freerdp-build"
+    local -a freerdp_compat_args=()
     DEPS_PREFIX="$deps/install"
     mkdir -p "$deps" "$DEPS_PREFIX"
+
+    # FreeRDP 3.15.0's type probe misdetects the SSIZE_T already supplied by
+    # Debian's 32-bit MinGW headers and otherwise emits a conflicting typedef.
+    if [ "$target" = "windows-i686" ]; then
+        freerdp_compat_args=(-DHAVE_WIN_SSIZE_T=TRUE)
+    fi
 
     for tool in "${triplet}-gcc" "${triplet}-g++" "${triplet}-windres" \
         "${triplet}-strip" "${triplet}-objdump"; do
@@ -219,6 +226,7 @@ build_windows_dependencies() {
         freerdp_source
         freerdp_flags
         cmake_ninja -S "$FREERDP_SOURCE" -B "$freerdp_build" \
+            "${freerdp_compat_args[@]}" \
             -DCMAKE_TOOLCHAIN_FILE="$MINGW_TOOLCHAIN" \
             -DMINGW_TRIPLET="$triplet" \
             -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX" \
