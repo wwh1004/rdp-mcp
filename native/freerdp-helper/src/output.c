@@ -8,6 +8,7 @@
  */
 
 #include "output.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,12 +28,24 @@
 #endif
 
 static CRITICAL_SECTION output_mutex;
+static bool g_output_initialized = false;
 
 /** Dedicated FILE* for binary protocol output (original stdout before redirect) */
 static FILE *g_binary_out = NULL;
+static output_callback_fn g_output_callback = NULL;
+static void *g_output_user_data = NULL;
+
+static void output_init_mutex(void) {
+    if (!g_output_initialized) {
+        InitializeCriticalSection(&output_mutex);
+        g_output_initialized = true;
+    }
+}
 
 void output_init(void) {
-    InitializeCriticalSection(&output_mutex);
+    output_init_mutex();
+    g_output_callback = NULL;
+    g_output_user_data = NULL;
 
     /*
      * FreeRDP3's default WLog console appender writes to stdout.
@@ -64,10 +77,39 @@ void output_init(void) {
     setvbuf(g_binary_out, NULL, _IONBF, 0);
 }
 
-void output_send(uint32_t type, const void *payload, uint32_t length) {
-    if (!g_binary_out) return;
+void output_init_callback(output_callback_fn callback, void *user_data) {
+    output_init_mutex();
+    g_binary_out = NULL;
+    g_output_callback = callback;
+    g_output_user_data = user_data;
+}
+
+void output_cleanup(void) {
+    if (!g_output_initialized) return;
 
     EnterCriticalSection(&output_mutex);
+    if (g_binary_out) {
+        fclose(g_binary_out);
+        g_binary_out = NULL;
+    }
+    g_output_callback = NULL;
+    g_output_user_data = NULL;
+    LeaveCriticalSection(&output_mutex);
+
+    DeleteCriticalSection(&output_mutex);
+    g_output_initialized = false;
+}
+
+void output_send(uint32_t type, const void *payload, uint32_t length) {
+    if (!g_binary_out && !g_output_callback) return;
+
+    EnterCriticalSection(&output_mutex);
+
+    if (g_output_callback) {
+        g_output_callback(type, payload, length, NULL, 0, g_output_user_data);
+        LeaveCriticalSection(&output_mutex);
+        return;
+    }
 
     /* Write header: type (u32-LE) + length (u32-LE) */
     uint8_t header[8];
@@ -98,11 +140,31 @@ void output_send_connected(int width, int height) {
 
 void output_send_bitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                         const uint8_t *rgba_data, size_t rgba_len) {
-    if (!g_binary_out) return;
+    if (!g_binary_out && !g_output_callback) return;
 
     EnterCriticalSection(&output_mutex);
 
     uint32_t payload_len = 8 + (uint32_t)rgba_len;
+
+    /* Payload sub-header: [x:u16-LE][y:u16-LE][w:u16-LE][h:u16-LE] */
+    uint8_t sub[8];
+    sub[0] = (uint8_t)(x & 0xFF);
+    sub[1] = (uint8_t)((x >> 8) & 0xFF);
+    sub[2] = (uint8_t)(y & 0xFF);
+    sub[3] = (uint8_t)((y >> 8) & 0xFF);
+    sub[4] = (uint8_t)(w & 0xFF);
+    sub[5] = (uint8_t)((w >> 8) & 0xFF);
+    sub[6] = (uint8_t)(h & 0xFF);
+    sub[7] = (uint8_t)((h >> 8) & 0xFF);
+
+    if (g_output_callback) {
+        g_output_callback(MSG_TYPE_BITMAP_UPDATE,
+                          sub, (uint32_t)sizeof(sub),
+                          rgba_data, (uint32_t)rgba_len,
+                          g_output_user_data);
+        LeaveCriticalSection(&output_mutex);
+        return;
+    }
 
     /* Message header: [type:u32-LE][length:u32-LE] */
     uint8_t header[8];
@@ -116,17 +178,6 @@ void output_send_bitmap(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
     header[6] = (uint8_t)((payload_len >> 16) & 0xFF);
     header[7] = (uint8_t)((payload_len >> 24) & 0xFF);
     fwrite(header, 1, 8, g_binary_out);
-
-    /* Payload sub-header: [x:u16-LE][y:u16-LE][w:u16-LE][h:u16-LE] */
-    uint8_t sub[8];
-    sub[0] = (uint8_t)(x & 0xFF);
-    sub[1] = (uint8_t)((x >> 8) & 0xFF);
-    sub[2] = (uint8_t)(y & 0xFF);
-    sub[3] = (uint8_t)((y >> 8) & 0xFF);
-    sub[4] = (uint8_t)(w & 0xFF);
-    sub[5] = (uint8_t)((w >> 8) & 0xFF);
-    sub[6] = (uint8_t)(h & 0xFF);
-    sub[7] = (uint8_t)((h >> 8) & 0xFF);
     fwrite(sub, 1, 8, g_binary_out);
 
     /* RGBA pixel data — written directly from caller's buffer (zero-copy) */
@@ -187,11 +238,31 @@ void output_send_clipboard_native(void) {
 void output_send_cursor(uint16_t hotspotX, uint16_t hotspotY,
                         uint16_t width, uint16_t height,
                         const uint8_t *rgba_data, size_t rgba_len) {
-    if (!g_binary_out || !rgba_data || rgba_len == 0) return;
+    if ((!g_binary_out && !g_output_callback) || !rgba_data || rgba_len == 0) return;
 
     EnterCriticalSection(&output_mutex);
 
     uint32_t payload_len = 8 + (uint32_t)rgba_len;
+
+    /* Payload sub-header: [hotspotX:u16-LE][hotspotY:u16-LE][width:u16-LE][height:u16-LE] */
+    uint8_t sub[8];
+    sub[0] = (uint8_t)(hotspotX & 0xFF);
+    sub[1] = (uint8_t)((hotspotX >> 8) & 0xFF);
+    sub[2] = (uint8_t)(hotspotY & 0xFF);
+    sub[3] = (uint8_t)((hotspotY >> 8) & 0xFF);
+    sub[4] = (uint8_t)(width & 0xFF);
+    sub[5] = (uint8_t)((width >> 8) & 0xFF);
+    sub[6] = (uint8_t)(height & 0xFF);
+    sub[7] = (uint8_t)((height >> 8) & 0xFF);
+
+    if (g_output_callback) {
+        g_output_callback(MSG_TYPE_CURSOR_SET,
+                          sub, (uint32_t)sizeof(sub),
+                          rgba_data, (uint32_t)rgba_len,
+                          g_output_user_data);
+        LeaveCriticalSection(&output_mutex);
+        return;
+    }
 
     /* Message header: [type:u32-LE][length:u32-LE] */
     uint8_t header[8];
@@ -205,17 +276,6 @@ void output_send_cursor(uint16_t hotspotX, uint16_t hotspotY,
     header[6] = (uint8_t)((payload_len >> 16) & 0xFF);
     header[7] = (uint8_t)((payload_len >> 24) & 0xFF);
     fwrite(header, 1, 8, g_binary_out);
-
-    /* Payload sub-header: [hotspotX:u16-LE][hotspotY:u16-LE][width:u16-LE][height:u16-LE] */
-    uint8_t sub[8];
-    sub[0] = (uint8_t)(hotspotX & 0xFF);
-    sub[1] = (uint8_t)((hotspotX >> 8) & 0xFF);
-    sub[2] = (uint8_t)(hotspotY & 0xFF);
-    sub[3] = (uint8_t)((hotspotY >> 8) & 0xFF);
-    sub[4] = (uint8_t)(width & 0xFF);
-    sub[5] = (uint8_t)((width >> 8) & 0xFF);
-    sub[6] = (uint8_t)(height & 0xFF);
-    sub[7] = (uint8_t)((height >> 8) & 0xFF);
     fwrite(sub, 1, 8, g_binary_out);
 
     /* RGBA pixel data */

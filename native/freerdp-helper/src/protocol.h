@@ -76,6 +76,12 @@ typedef struct {
 bool protocol_read_command(Command *cmd);
 
 /**
+ * Parse one UTF-8 JSON command from memory.
+ * Returns true when a command object was produced, including CMD_UNKNOWN.
+ */
+bool protocol_parse_command(const char *json_text, Command *cmd);
+
+/**
  * Free any dynamically allocated data in a command.
  */
 void protocol_free_command(Command *cmd);

@@ -41,6 +41,16 @@
 #define MSG_TYPE_ERROR                   0xFF
 
 /**
+ * Library output callback. Payloads are split into two buffers so bitmap and
+ * cursor pixels can be forwarded without allocating another full frame.
+ * Buffers are borrowed and remain valid only for the duration of the callback.
+ */
+typedef void (*output_callback_fn)(uint32_t type,
+                                   const void *part_a, uint32_t part_a_length,
+                                   const void *part_b, uint32_t part_b_length,
+                                   void *user_data);
+
+/**
  * Send a binary-framed message to stdout.
  * Thread-safe (uses internal mutex).
  */
@@ -124,5 +134,11 @@ void output_send_cursor_default(void);
  * Initialize output (sets stdout to binary mode on Windows).
  */
 void output_init(void);
+
+/** Initialize output for an embedded library consumer. */
+void output_init_callback(output_callback_fn callback, void *user_data);
+
+/** Release output resources. */
+void output_cleanup(void);
 
 #endif /* OUTPUT_H */

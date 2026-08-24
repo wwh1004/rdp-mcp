@@ -43,9 +43,16 @@ bool protocol_read_command(Command *cmd) {
 
     if (strlen(line) == 0) return false;
 
-    cJSON *json = cJSON_Parse(line);
+    return protocol_parse_command(line, cmd);
+}
+
+bool protocol_parse_command(const char *json_text, Command *cmd) {
+    if (!json_text || !cmd || json_text[0] == '\0') return false;
+
+    cJSON *json = cJSON_Parse(json_text);
     if (!json) {
-        fprintf(stderr, "[conduit-freerdp] Failed to parse JSON: %s\n", line);
+        fprintf(stderr, "[rdp-mcp-native] Failed to parse JSON command\n");
+        memset(cmd, 0, sizeof(Command));
         cmd->type = CMD_UNKNOWN;
         return true;
     }
