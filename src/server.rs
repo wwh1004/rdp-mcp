@@ -304,7 +304,7 @@ impl RdpMcpServer {
         }))
     }
 
-    #[tool(description = "Type US-layout ASCII text in an RDP session")]
+    #[tool(description = "Type text in an RDP session")]
     async fn rdp_type(
         &self,
         Parameters(params): Parameters<TypeParams>,
@@ -316,7 +316,7 @@ impl RdpMcpServer {
         json_result(json!({"success": true, "characters_typed": characters_typed}))
     }
 
-    #[tool(description = "Send a keyboard event to an RDP session: press, down, or up")]
+    #[tool(description = "Send a keyboard event to an RDP session (key press, down, or up)")]
     async fn rdp_send_key(
         &self,
         Parameters(params): Parameters<SendKeyParams>,
@@ -335,7 +335,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Move the mouse cursor. Coordinates are in screenshot image space and automatically scaled to native resolution."
+        description = "Move the mouse cursor in an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
     )]
     async fn rdp_mouse_move(
         &self,
@@ -347,7 +347,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Perform a press-move-release mouse drag. Coordinates are in screenshot image space and automatically scaled."
+        description = "Perform a mouse drag operation in an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
     )]
     async fn rdp_mouse_drag(
         &self,
@@ -376,7 +376,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Send a mouse scroll event. Coordinates are in screenshot image space and automatically scaled."
+        description = "Send a mouse scroll event to an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
     )]
     async fn rdp_mouse_scroll(
         &self,
