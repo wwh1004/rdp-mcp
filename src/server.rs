@@ -14,15 +14,15 @@ use crate::native::{NativeManager, ScreenshotRegion as NativeScreenshotRegion};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionOpenParams {
-    /// Host to connect to.
+    /// Host to connect to
     pub host: String,
-    /// Port. RDP defaults to 3389.
+    /// Port (default: 3389)
     pub port: Option<u16>,
-    /// Username for authentication.
+    /// Username for RDP authentication (required to connect)
     pub username: Option<String>,
-    /// Password for authentication.
+    /// Password for RDP authentication (required to connect)
     pub password: Option<String>,
-    /// Optional connection name.
+    /// Connection name (optional, will be auto-generated if not provided)
     pub name: Option<String>,
 }
 
@@ -34,9 +34,13 @@ pub struct ConnectionIdParams {
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 pub struct ScreenshotRegion {
+    /// X coordinate of the capture region in native desktop pixels
     pub x: i32,
+    /// Y coordinate of the capture region in native desktop pixels
     pub y: i32,
+    /// Capture region width in native desktop pixels
     pub width: u32,
+    /// Capture region height in native desktop pixels
     pub height: u32,
 }
 
@@ -44,13 +48,13 @@ pub struct ScreenshotRegion {
 pub struct ScreenshotParams {
     /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
-    /// Image format: png or jpeg.
+    /// Image format: "png" or "jpeg" (default: "jpeg")
     #[serde(default = "default_image_format")]
     pub format: String,
-    /// JPEG quality from 1 through 100.
+    /// JPEG quality 1-100 (default: 40). Lower values produce smaller images.
     #[serde(default = "default_quality")]
     pub quality: u8,
-    /// Maximum returned width. Zero disables resizing.
+    /// Maximum image width in pixels. Images wider than this are downscaled preserving aspect ratio. Default: 1024. Set to 0 to disable resizing.
     #[serde(default = "default_max_width")]
     pub max_width: u32,
     /// Optional capture region in native desktop pixels, independent of screenshot size.
@@ -59,65 +63,94 @@ pub struct ScreenshotParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ClickParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// X coordinate in native desktop pixels
     pub x: i32,
+    /// Y coordinate in native desktop pixels
     pub y: i32,
+    /// Mouse button: "left", "right", or "middle" (default: "left")
     #[serde(default = "default_button")]
     pub button: String,
+    /// Whether to double-click (default: false)
     #[serde(default)]
     pub double_click: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TypeParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// Text to type
     pub text: String,
+    /// Delay between keystrokes in ms (default: 0)
     #[serde(default)]
     pub delay_ms: u64,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SendKeyParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// Key name (e.g., "Enter", "Tab", "F1", "a")
     pub key: String,
+    /// Modifiers: "ctrl", "alt", "shift", "meta"
     #[serde(default)]
     pub modifiers: Vec<String>,
+    /// Action: "press", "down", or "up" (default: "press")
     #[serde(default = "default_key_action")]
     pub action: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MouseMoveParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// Target X coordinate in native desktop pixels
     pub x: i32,
+    /// Target Y coordinate in native desktop pixels
     pub y: i32,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MouseDragParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// Starting X coordinate in native desktop pixels
     pub from_x: i32,
+    /// Starting Y coordinate in native desktop pixels
     pub from_y: i32,
+    /// Ending X coordinate in native desktop pixels
     pub to_x: i32,
+    /// Ending Y coordinate in native desktop pixels
     pub to_y: i32,
+    /// Mouse button (default: "left")
     #[serde(default = "default_button")]
     pub button: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MouseScrollParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// X coordinate in native desktop pixels
     pub x: i32,
+    /// Y coordinate in native desktop pixels
     pub y: i32,
+    /// Scroll amount. Positive = scroll up, negative = scroll down.
     pub delta: f64,
+    /// Whether to scroll vertically (default: true). Set false for horizontal scroll.
     #[serde(default = "default_true")]
     pub vertical: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ResizeParams {
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
+    /// Desired display width in pixels
     pub width: u32,
+    /// Desired display height in pixels
     pub height: u32,
 }
 
