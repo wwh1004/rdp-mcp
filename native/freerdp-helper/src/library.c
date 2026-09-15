@@ -161,10 +161,6 @@ int rdp_mcp_native_initialize(rdp_mcp_native_output_fn callback, void *user_data
     output_init_callback((output_callback_fn)callback, user_data);
     input_init();
 
-#ifdef _WIN32
-    cliprdr_win32_init();
-#endif
-
     g_running = true;
     g_connected = false;
     g_initialized = true;

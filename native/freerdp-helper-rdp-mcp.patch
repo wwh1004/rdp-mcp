@@ -1653,7 +1653,7 @@ new file mode 100644
 index 0000000..073cc03
 --- /dev/null
 +++ b/freerdp-helper/src/library.c
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,327 @@
 +/**
 + * In-process library adapter for conduit-desktop's freerdp-helper.
 + *
@@ -1816,10 +1816,6 @@ index 0000000..073cc03
 +
 +    output_init_callback((output_callback_fn)callback, user_data);
 +    input_init();
-+
-+#ifdef _WIN32
-+    cliprdr_win32_init();
-+#endif
 +
 +    g_running = true;
 +    g_connected = false;
