@@ -11,6 +11,7 @@ pub enum Transport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Run(Transport, Option<SocketAddr>),
+    Worker,
     Help,
     Version,
 }
@@ -24,7 +25,7 @@ Usage:
 
 Options:
   --preview-bind <IP:PORT>  Optional dedicated MJPEG listener (loopback only)
-                           HTTP mode also serves /preview.mjpg on --bind
+                           Preview: /preview.mjpg?connection_id=<ID>
   --bind <IP:PORT>  HTTP listen address [default: 127.0.0.1:8000]
   --path <PATH>     Streamable HTTP MCP endpoint [default: /mcp]
   -h, --help        Print help
@@ -32,6 +33,12 @@ Options:
 ";
 
 pub fn parse(args: &[String]) -> Result<Command> {
+    if args.get(1).is_some_and(|arg| arg == "--worker") {
+        if args.len() != 2 {
+            bail!("--worker does not accept other arguments");
+        }
+        return Ok(Command::Worker);
+    }
     let mut mode: Option<String> = None;
     let mut bind = "127.0.0.1:8000".to_owned();
     let mut path = "/mcp".to_owned();
@@ -78,10 +85,7 @@ pub fn parse(args: &[String]) -> Result<Command> {
             if path.trim_end_matches('/') == crate::preview::PATH {
                 bail!("MCP path conflicts with /preview.mjpg");
             }
-            Ok(Command::Run(
-                Transport::Http { bind, path },
-                preview_bind,
-            ))
+            Ok(Command::Run(Transport::Http { bind, path }, preview_bind))
         }
         other => bail!("unsupported transport: {other}"),
     }
@@ -103,6 +107,16 @@ mod tests {
             parse(&["rdp-mcp".into()]).unwrap(),
             Command::Run(Transport::Stdio, None)
         );
+    }
+
+    #[test]
+    fn worker_mode_is_exclusive() {
+        assert_eq!(
+            parse(&["rdp-mcp".into(), "--worker".into()]).unwrap(),
+            Command::Worker
+        );
+        assert!(parse(&["rdp-mcp".into(), "--worker".into(), "http".into()]).is_err());
+        assert!(parse(&["rdp-mcp".into(), "stdio".into(), "--worker".into()]).is_err());
     }
 
     #[test]

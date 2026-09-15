@@ -10,7 +10,7 @@ use rmcp::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::native::{NativeManager, ScreenshotRegion as NativeScreenshotRegion};
+use crate::session::{ScreenshotRegion as NativeScreenshotRegion, SessionManager};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionOpenParams {
@@ -180,19 +180,19 @@ fn default_true() -> bool {
 
 #[derive(Clone)]
 pub struct RdpMcpServer {
-    manager: Arc<NativeManager>,
+    manager: Arc<SessionManager>,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
 
 impl RdpMcpServer {
-    pub fn manager(&self) -> Arc<NativeManager> {
+    pub fn manager(&self) -> Arc<SessionManager> {
         self.manager.clone()
     }
 
     pub fn new() -> Self {
         Self {
-            manager: Arc::new(NativeManager::new()),
+            manager: Arc::new(SessionManager::new()),
             tool_router: Self::tool_router(),
         }
     }
@@ -201,7 +201,7 @@ impl RdpMcpServer {
 #[tool_router]
 impl RdpMcpServer {
     #[tool(
-        description = "List all active RDP connections. Returns the session id used by all RDP tools."
+        description = "List RDP connections and their connecting, connected, or disconnected status. Returns the connection id used by all RDP tools. Disconnected entries remain until closed."
     )]
     async fn rdp_list(&self) -> Result<CallToolResult, McpError> {
         let connections = self

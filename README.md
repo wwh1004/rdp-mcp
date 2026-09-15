@@ -7,8 +7,31 @@ layer is adapted from
 [`conduit-desktop/freerdp-helper`](https://github.com/advenimus/conduit-desktop/tree/main/freerdp-helper)
 and embeds [FreeRDP](https://www.freerdp.com/).
 
-The server supports MCP over stdio and Streamable HTTP. One `rdp-mcp` process
-can own one active RDP connection at a time.
+The server supports MCP over stdio and Streamable HTTP. One server manages
+multiple independent RDP connections. Each connection runs in a child process
+of the same executable, started with the internal `--worker` argument.
+
+The Rust worker calls the existing native C ABI. Commands travel over its stdin
+as JSON lines; events travel over stdout as length-prefixed binary messages.
+FreeRDP dirty rectangles carry raw RGBA pixels, with H.264 disabled. The parent
+continuously reads these events into a separate framebuffer for each connection.
+Native logs are redirected to stderr before FreeRDP initializes.
+
+The connection registry is locked only for lookups and changes. Compound input
+operations are serialized per connection; other connections, screenshots, and
+previews continue independently. A worker crash affects its own connection.
+`rdp_list` includes `connecting`, `connected`, and `disconnected` entries;
+disconnected entries remain until `rdp_close` removes them. Connection IDs are
+unique during the server's lifetime and HTTP MCP clients share the registry.
+
+Opening a connection waits up to 30 seconds for the native connect call to
+finish successfully. Input calls report successful writes to the worker, not
+per-command execution acknowledgments; native failures arrive as error events.
+Resize waits up to 10 seconds for the requested dimensions and reports timeout.
+Closing a connection cancels waiting operations and allows the worker three
+seconds to shut down before terminating and reaping it. Server shutdown closes
+all workers; a worker also exits if its parent disappears, including while a
+native connect call is blocked.
 
 ## Build in WSL2
 
@@ -111,18 +134,19 @@ network.
 
 ## Live desktop preview (MJPEG)
 
-HTTP mode also serves the current RDP desktop at `/preview.mjpg` on the same
-listener. For stdio mode, enable a separate loopback listener:
+HTTP mode also serves a selected RDP desktop at
+`/preview.mjpg?connection_id=<ID>` on the same listener. For stdio mode, enable
+a separate loopback listener:
 
 ```powershell
 rdp-mcp.exe stdio --preview-bind 127.0.0.1:8001
-# Open the RDP connection through MCP, then run in another terminal:
-ffplay -f mpjpeg http://127.0.0.1:8001/preview.mjpg
+# Use the id returned by rdp_open or rdp_list:
+ffplay -f mpjpeg 'http://127.0.0.1:8001/preview.mjpg?connection_id=rdp_1'
 ```
 
-For `rdp-mcp.exe http`, use `http://127.0.0.1:8000/preview.mjpg` instead.
+For `rdp-mcp.exe http`, use port 8000 in the URL instead.
 `--preview-bind` is also available in HTTP mode for an additional listener.
-The preview shares the process's existing RDP connection; it never opens one.
+Each preview is bound to the specified existing connection.
 Video bytes are sent over HTTP, leaving MCP stdio available for protocol traffic.
 
 Preview samples at up to 10 FPS, at native desktop size and JPEG quality 65.
@@ -132,10 +156,11 @@ samples; slow viewers pull the latest frame without an application frame queue.
 There is no preview encoding when no player is connected. Multiple viewers
 encode independently. Desktop resizing is reflected in subsequent JPEGs.
 
-The stream waits while no connected session has a frame, including before
-`rdp_open` and after disconnect; it resumes when a session has frames again.
-Players may retain their last displayed image during that wait. The independent
-RDP cursor is not composited into the preview, and audio is not included.
+Missing `connection_id` returns HTTP 400; an unknown ID returns HTTP 404.
+The stream waits for the selected connection's first frame and ends when that
+connection closes or disconnects. It never switches to another connection.
+Players may retain their last displayed image after the stream ends. The
+independent RDP cursor is not composited into the preview, and audio is not included.
 The endpoint has the same unauthenticated access as the HTTP MCP server;
 `--preview-bind` accepts loopback addresses only.
 
@@ -146,7 +171,7 @@ upstream `conduit-desktop/mcp` directory.
 
 | Tool | Purpose |
 | --- | --- |
-| `rdp_list` | List the connection managed by this process. |
+| `rdp_list` | List all managed connections and their status. |
 | `rdp_open` | Open an RDP connection. |
 | `rdp_close` | Close an RDP connection. |
 | `rdp_screenshot` | Capture JPEG or PNG, optionally cropped or resized. |
@@ -181,6 +206,26 @@ Smoke-test all 12 tools over stdio or Streamable HTTP without opening RDP:
 .\.venv\Scripts\python.exe examples\mcp_smoke.py
 .\.venv\Scripts\python.exe examples\mcp_smoke.py --transport http
 ```
+
+Run Rust tests (Python 3 is used for deterministic worker subprocess fixtures):
+
+```sh
+cargo test --locked --lib
+```
+
+The tests cover independent workers, framebuffer isolation, concurrent input
+and screenshots, resize, crash handling, close during connect, and fragmented
+or malformed binary messages. They use synthetic desktops and require no RDP
+credentials.
+
+Exercise the built executable's real native worker, pipe framing, concurrent
+connect failure, and parent-exit cleanup using local TCP test sockets:
+
+```powershell
+.\.venv\Scripts\python.exe examples\worker_smoke.py dist\windows-x86_64\rdp-mcp.exe
+```
+
+This verifies lifecycle handling without authenticating to an RDP server.
 
 Run the complete Windows workflow. It opens Edge, opens Downloads in Explorer,
 creates `helloworld.txt`, types and saves `Hello World!`, and reopens the file.

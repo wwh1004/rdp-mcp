@@ -1,11 +1,19 @@
 mod cli;
 mod image;
 mod keyboard;
-mod native;
 mod preview;
 mod server;
+mod session;
+mod worker;
 
-use std::{ffi::CStr, net::SocketAddr, os::raw::c_char, panic::AssertUnwindSafe};
+use std::{
+    ffi::CStr,
+    net::SocketAddr,
+    os::raw::c_char,
+    panic::AssertUnwindSafe,
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
+};
 
 use anyhow::Result;
 use cli::{Command, HELP, Transport};
@@ -13,10 +21,37 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use rmcp::{ServiceExt, transport::stdio};
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio_util::sync::CancellationToken;
+
+// The MCP service waits for in-flight tools before completing. Observe transport
+// EOF directly so those tools can be interrupted by closing their workers first.
+struct EofReader<R> {
+    inner: R,
+    cancellation: CancellationToken,
+}
+impl<R: AsyncRead + Unpin> AsyncRead for EofReader<R> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let before = buffer.filled().len();
+        let has_space = buffer.remaining() != 0;
+        let result = Pin::new(&mut this.inner).poll_read(cx, buffer);
+        if let Poll::Ready(status) = &result
+            && (status.is_err() || (has_space && buffer.filled().len() == before))
+        {
+            this.cancellation.cancel();
+        }
+        result
+    }
+}
 
 fn run(args: Vec<String>) -> Result<()> {
     match cli::parse(&args)? {
+        Command::Worker => worker::run(),
         Command::Help => {
             print!("{HELP}");
             Ok(())
@@ -52,18 +87,29 @@ async fn run_server(transport: Transport, preview_bind: Option<SocketAddr>) -> R
         }
         None => None,
     };
-    let mcp = run_transport(transport, service, cancellation);
-    if let Some(listener) = preview_listener {
-        tokio::select! {
-            result = mcp => result,
-            result = async { axum::serve(listener, preview_app).await } => {
-                result?;
-                Ok(())
+    let manager = service.manager();
+    let serving = async {
+        let mcp = run_transport(transport, service, cancellation.clone());
+        if let Some(listener) = preview_listener {
+            tokio::select! {
+                result = mcp => result,
+                result = async { axum::serve(listener, preview_app).await } => {
+                    result?;
+                    Ok(())
+                }
             }
+        } else {
+            mcp.await
         }
-    } else {
-        mcp.await
-    }
+    };
+    let result = tokio::select! {
+        result = serving => result,
+        _ = cancellation.cancelled() => Ok(()),
+        signal = tokio::signal::ctrl_c() => signal.map_err(anyhow::Error::from),
+    };
+    cancellation.cancel();
+    tokio::task::spawn_blocking(move || manager.shutdown()).await?;
+    result
 }
 
 async fn run_transport(
@@ -73,7 +119,16 @@ async fn run_transport(
 ) -> Result<()> {
     match transport {
         Transport::Stdio => {
-            let running = service.serve(stdio()).await?;
+            let (input, output) = stdio();
+            let running = service
+                .serve((
+                    EofReader {
+                        inner: input,
+                        cancellation,
+                    },
+                    output,
+                ))
+                .await?;
             running.waiting().await?;
         }
         Transport::Http { bind, path } => {
@@ -88,12 +143,7 @@ async fn run_transport(
                 .nest_service(&path, http_service);
             let listener = tokio::net::TcpListener::bind(bind).await?;
             eprintln!("rdp-mcp Streamable HTTP listening on http://{bind}{path}");
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = tokio::signal::ctrl_c().await;
-                    cancellation.cancel();
-                })
-                .await?;
+            axum::serve(listener, app).await?;
         }
     }
     Ok(())

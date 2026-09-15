@@ -200,6 +200,15 @@ def run_http(server: Path, bind: str, path: str) -> None:
             raise RuntimeError("rdp_list failed")
         print("rdp_list=ok")
         print(f"session={session_id}")
+        for suffix, expected in (("/preview.mjpg", 400), ("/preview.mjpg?connection_id=missing", 404)):
+            try:
+                loopback_opener.open(f"http://{bind}{suffix}", timeout=5)
+            except urllib.error.HTTPError as error:
+                if error.code != expected:
+                    raise RuntimeError(f"preview returned {error.code}, expected {expected}") from error
+            else:
+                raise RuntimeError(f"preview should have returned HTTP {expected}")
+        print("preview routing=ok")
     finally:
         process.terminate()
         try:
