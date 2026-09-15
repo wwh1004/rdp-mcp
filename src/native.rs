@@ -311,6 +311,8 @@ impl NativeSession {
         let native_width = state.width;
         let native_height = state.height;
         let frame_version = state.frame_version;
+        let pixels = state.framebuffer.clone();
+        drop(state);
         let native_region = region.map(|region| NativeRegion {
             x: region.x.max(0) as u32,
             y: region.y.max(0) as u32,
@@ -318,7 +320,7 @@ impl NativeSession {
             height: region.height.max(1),
         });
         let encoded = image::encode(
-            &state.framebuffer,
+            &pixels,
             native_width,
             native_height,
             format,
@@ -349,11 +351,41 @@ impl Drop for NativeSession {
     }
 }
 
+pub struct PreviewFrame {
+    pub connection_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub version: u64,
+    pub pixels: Vec<u8>,
+}
+
 pub struct NativeManager {
     session: Mutex<Option<NativeSession>>,
 }
 
 impl NativeManager {
+    /// Skip busy sessions instead of waiting for MCP operations or RDP updates.
+    /// The caller owns the pixels and can encode them without either lock.
+    pub fn preview_frame(&self) -> Option<PreviewFrame> {
+        let slot = self.session.try_lock().ok()?;
+        let session = slot.as_ref()?;
+        let state = session.callback.inner.try_lock().ok()?;
+        if !state.connected
+            || state.disconnected
+            || state.error.is_some()
+            || state.frame_version == 0
+        {
+            return None;
+        }
+        Some(PreviewFrame {
+            connection_id: session.id.clone(),
+            width: state.width,
+            height: state.height,
+            version: state.frame_version,
+            pixels: state.framebuffer.clone(),
+        })
+    }
+
     pub fn new() -> Self {
         Self {
             session: Mutex::new(None),
@@ -744,4 +776,42 @@ fn apply_bitmap(state: &mut SessionState, header: &[u8], pixels: &[u8]) {
             .copy_from_slice(&pixels[source_offset..source_offset + copy_bytes]);
     }
     state.frame_version += 1;
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_owns_pixels_and_skips_busy_or_disconnected_sessions() {
+        let manager = NativeManager::new();
+        assert!(manager.preview_frame().is_none());
+        let callback = Box::new(CallbackState::new());
+        *callback.inner.lock().unwrap() = SessionState {
+            connected: true,
+            width: 1,
+            height: 1,
+            framebuffer: vec![255, 0, 0, 255],
+            frame_version: 1,
+            ..SessionState::default()
+        };
+        *manager.session.lock().unwrap() = Some(NativeSession {
+            id: "test".into(),
+            name: "test".into(),
+            host: "localhost".into(),
+            port: 3389,
+            callback,
+            initialized: false,
+        });
+        let frame = manager.preview_frame().unwrap();
+        let slot = manager.session.try_lock().unwrap();
+        assert!(manager.preview_frame().is_none());
+        let mut state = slot.as_ref().unwrap().callback.inner.try_lock().unwrap();
+        state.framebuffer.fill(0);
+        assert_eq!(frame.pixels, [255, 0, 0, 255]);
+        state.disconnected = true;
+        drop(state);
+        drop(slot);
+        assert!(manager.preview_frame().is_none());
+    }
 }

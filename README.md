@@ -109,6 +109,36 @@ The HTTP server does not add authentication. Keep it on loopback or put an
 authenticated, TLS-terminating proxy in front of it before exposing it to a
 network.
 
+## Live desktop preview (MJPEG)
+
+HTTP mode also serves the current RDP desktop at `/preview.mjpg` on the same
+listener. For stdio mode, enable a separate loopback listener:
+
+```powershell
+rdp-mcp.exe stdio --preview-bind 127.0.0.1:8001
+# Open the RDP connection through MCP, then run in another terminal:
+ffplay -f mpjpeg http://127.0.0.1:8001/preview.mjpg
+```
+
+For `rdp-mcp.exe http`, use `http://127.0.0.1:8000/preview.mjpg` instead.
+`--preview-bind` is also available in HTTP mode for an additional listener.
+The preview shares the process's existing RDP connection; it never opens one.
+Video bytes are sent over HTTP, leaving MCP stdio available for protocol traffic.
+
+Preview samples at up to 10 FPS, at native desktop size and JPEG quality 65.
+Each viewer caches its last JPEG and repeats it when the desktop is unchanged.
+Encoding runs outside the RDP locks on a blocking worker. Busy sessions skip
+samples; slow viewers pull the latest frame without an application frame queue.
+There is no preview encoding when no player is connected. Multiple viewers
+encode independently. Desktop resizing is reflected in subsequent JPEGs.
+
+The stream waits while no connected session has a frame, including before
+`rdp_open` and after disconnect; it resumes when a session has frames again.
+Players may retain their last displayed image during that wait. The independent
+RDP cursor is not composited into the preview, and audio is not included.
+The endpoint has the same unauthenticated access as the HTTP MCP server;
+`--preview-bind` accepts loopback addresses only.
+
 ## MCP tools
 
 The RDP tools and parameter names follow the RDP MCP implementation in the

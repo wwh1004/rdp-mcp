@@ -656,6 +656,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "futures-util",
  "jpeg-encoder",
  "png",
  "rmcp",

@@ -186,6 +186,10 @@ pub struct RdpMcpServer {
 }
 
 impl RdpMcpServer {
+    pub fn manager(&self) -> Arc<NativeManager> {
+        self.manager.clone()
+    }
+
     pub fn new() -> Self {
         Self {
             manager: Arc::new(NativeManager::new()),

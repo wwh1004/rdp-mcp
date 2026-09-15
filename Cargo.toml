@@ -15,6 +15,7 @@ crate-type = ["rlib", "staticlib"]
 anyhow = "1.0"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.23"
+futures-util = "0.3"
 jpeg-encoder = "0.6"
 png = "0.18"
 rmcp = { version = "3.1.4", default-features = false, features = [
