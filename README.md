@@ -116,11 +116,11 @@ upstream `conduit-desktop/mcp` directory.
 
 | Tool | Purpose |
 | --- | --- |
-| `connection_list` | List the connection managed by this process. |
-| `connection_open` | Open an RDP connection. |
-| `connection_close` | Close an RDP connection. |
+| `rdp_list` | List the connection managed by this process. |
+| `rdp_open` | Open an RDP connection. |
+| `rdp_close` | Close an RDP connection. |
 | `rdp_screenshot` | Capture JPEG or PNG, optionally cropped or resized. |
-| `rdp_click` | Click left, middle, or right at screenshot coordinates. |
+| `rdp_click` | Click left, middle, or right at native desktop coordinates. |
 | `rdp_type` | Type text with RDP Unicode keyboard events. |
 | `rdp_send_key` | Send a scancode key with Ctrl, Alt, Shift, or Meta/Win. |
 | `rdp_mouse_move` | Move the remote pointer. |

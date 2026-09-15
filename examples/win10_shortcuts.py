@@ -170,10 +170,9 @@ def run(args: argparse.Namespace) -> Path:
         opened = call(
             recorder,
             client,
-            "connection_open",
+            "rdp_open",
             "Connect to the Windows shortcut-test host",
             {
-                "connection_type": "rdp",
                 "host": args.host,
                 "port": args.port,
                 "username": args.username,
@@ -424,7 +423,7 @@ def run(args: argparse.Namespace) -> Path:
                 call(
                     recorder,
                     client,
-                    "connection_close",
+                    "rdp_close",
                     "Close the RDP connection",
                     {"connection_id": connection_id},
                 )

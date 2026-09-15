@@ -15,9 +15,9 @@ from typing import Any
 
 
 EXPECTED_TOOLS = {
-    "connection_list",
-    "connection_open",
-    "connection_close",
+    "rdp_list",
+    "rdp_open",
+    "rdp_close",
     "rdp_screenshot",
     "rdp_click",
     "rdp_type",
@@ -98,12 +98,12 @@ def run_stdio(server: Path) -> None:
         process.stdin.flush()
         check_tools(check_result(exchange(request_message(2, "tools/list", {})), 2))
         listed = check_result(
-            exchange(request_message(3, "tools/call", {"name": "connection_list", "arguments": {}})),
+            exchange(request_message(3, "tools/call", {"name": "rdp_list", "arguments": {}})),
             3,
         )
         if listed.get("isError"):
-            raise RuntimeError("connection_list failed")
-        print("connection_list=ok")
+            raise RuntimeError("rdp_list failed")
+        print("rdp_list=ok")
     finally:
         process.stdin.close()
         try:
@@ -193,12 +193,12 @@ def run_http(server: Path, bind: str, path: str) -> None:
         assert listed is not None
         check_tools(check_result(listed, 2))
         connections = post(
-            request_message(3, "tools/call", {"name": "connection_list", "arguments": {}})
+            request_message(3, "tools/call", {"name": "rdp_list", "arguments": {}})
         )
         assert connections is not None
         if check_result(connections, 3).get("isError"):
-            raise RuntimeError("connection_list failed")
-        print("connection_list=ok")
+            raise RuntimeError("rdp_list failed")
+        print("rdp_list=ok")
         print(f"session={session_id}")
     finally:
         process.terminate()

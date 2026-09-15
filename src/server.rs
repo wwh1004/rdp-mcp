@@ -14,41 +14,35 @@ use crate::native::{NativeManager, ScreenshotRegion as NativeScreenshotRegion};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionOpenParams {
-    /// Connection type: ssh, rdp, vnc.
-    pub connection_type: String,
     /// Host to connect to.
     pub host: String,
     /// Port. RDP defaults to 3389.
     pub port: Option<u16>,
-    /// Credential ID from the vault. Unsupported in this standalone server.
-    pub credential_id: Option<String>,
     /// Username for authentication.
     pub username: Option<String>,
     /// Password for authentication.
     pub password: Option<String>,
     /// Optional connection name.
     pub name: Option<String>,
-    /// SSH auth method override. Ignored for RDP.
-    pub ssh_auth_method: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ConnectionIdParams {
-    /// UUID of the RDP connection.
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 pub struct ScreenshotRegion {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ScreenshotParams {
-    /// UUID of the RDP session.
+    /// RDP connection ID returned by rdp_open or rdp_list, e.g. rdp_1.
     pub connection_id: String,
     /// Image format: png or jpeg.
     #[serde(default = "default_image_format")]
@@ -59,15 +53,15 @@ pub struct ScreenshotParams {
     /// Maximum returned width. Zero disables resizing.
     #[serde(default = "default_max_width")]
     pub max_width: u32,
-    /// Optional capture region in screenshot image coordinates.
+    /// Optional capture region in native desktop pixels, independent of screenshot size.
     pub region: Option<ScreenshotRegion>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ClickParams {
     pub connection_id: String,
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
     #[serde(default = "default_button")]
     pub button: String,
     #[serde(default)]
@@ -95,17 +89,17 @@ pub struct SendKeyParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MouseMoveParams {
     pub connection_id: String,
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MouseDragParams {
     pub connection_id: String,
-    pub from_x: f64,
-    pub from_y: f64,
-    pub to_x: f64,
-    pub to_y: f64,
+    pub from_x: i32,
+    pub from_y: i32,
+    pub to_x: i32,
+    pub to_y: i32,
     #[serde(default = "default_button")]
     pub button: String,
 }
@@ -113,8 +107,8 @@ pub struct MouseDragParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MouseScrollParams {
     pub connection_id: String,
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
     pub delta: f64,
     #[serde(default = "default_true")]
     pub vertical: bool,
@@ -172,7 +166,7 @@ impl RdpMcpServer {
     #[tool(
         description = "List all active RDP connections. Returns the session id used by all RDP tools."
     )]
-    async fn connection_list(&self) -> Result<CallToolResult, McpError> {
+    async fn rdp_list(&self) -> Result<CallToolResult, McpError> {
         let connections = self
             .manager
             .list()
@@ -194,20 +188,17 @@ impl RdpMcpServer {
     #[tool(
         description = "Open a new connection by specifying host, port, and credentials manually. This standalone server supports RDP only."
     )]
-    async fn connection_open(
+    async fn rdp_open(
         &self,
         Parameters(params): Parameters<ConnectionOpenParams>,
     ) -> Result<CallToolResult, McpError> {
         let manager = self.manager.clone();
         let info = blocking(move || {
-            let _ = params.ssh_auth_method;
             manager.open(
-                &params.connection_type,
                 params.host,
                 params.port.unwrap_or(3389),
                 params.username,
                 params.password,
-                params.credential_id,
                 params.name,
                 1280,
                 720,
@@ -225,7 +216,7 @@ impl RdpMcpServer {
     }
 
     #[tool(description = "Close an active connection")]
-    async fn connection_close(
+    async fn rdp_close(
         &self,
         Parameters(params): Parameters<ConnectionIdParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -237,7 +228,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Capture a screenshot of an RDP session. Returns a native MCP image block. Coordinates accepted by input tools use the latest full screenshot image space."
+        description = "Capture a screenshot of an RDP session. Returns a native MCP image block. Region and input coordinates use native desktop pixels; screenshot resizing does not change input coordinates. Set max_width to 0 for an original-size image."
     )]
     async fn rdp_screenshot(
         &self,
@@ -279,7 +270,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Send a mouse click to an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
+        description = "Send a mouse click to an RDP session. Coordinates are in native desktop pixels."
     )]
     async fn rdp_click(
         &self,
@@ -335,7 +326,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Move the mouse cursor in an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
+        description = "Move the mouse cursor in an RDP session. Coordinates are in native desktop pixels."
     )]
     async fn rdp_mouse_move(
         &self,
@@ -347,7 +338,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Perform a mouse drag operation in an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
+        description = "Perform a mouse drag operation in an RDP session. Coordinates are in native desktop pixels."
     )]
     async fn rdp_mouse_drag(
         &self,
@@ -376,7 +367,7 @@ impl RdpMcpServer {
     }
 
     #[tool(
-        description = "Send a mouse scroll event to an RDP session. Coordinates are in screenshot image space and automatically scaled to native resolution."
+        description = "Send a mouse scroll event to an RDP session. Coordinates are in native desktop pixels."
     )]
     async fn rdp_mouse_scroll(
         &self,

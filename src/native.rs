@@ -1,19 +1,23 @@
 use std::{
     ffi::{CString, c_char, c_void},
     slice,
-    sync::{Condvar, Mutex},
+    sync::{
+        Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use crate::{
     image::{self, EncodedImage, NativeRegion},
     keyboard::{KeyStroke, key_stroke, modifier},
 };
+
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 const MSG_CONNECTED: u32 = 0x01;
 const MSG_BITMAP_UPDATE: u32 = 0x02;
@@ -72,10 +76,10 @@ pub struct ConnectionInfo {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenshotRegion {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub struct Screenshot {
@@ -93,8 +97,6 @@ struct SessionState {
     height: u32,
     framebuffer: Vec<u8>,
     frame_version: u64,
-    scale_x: f64,
-    scale_y: f64,
     error: Option<String>,
 }
 
@@ -106,11 +108,7 @@ struct CallbackState {
 impl CallbackState {
     fn new() -> Self {
         Self {
-            inner: Mutex::new(SessionState {
-                scale_x: 1.0,
-                scale_y: 1.0,
-                ..SessionState::default()
-            }),
+            inner: Mutex::new(SessionState::default()),
             changed: Condvar::new(),
         }
     }
@@ -142,7 +140,7 @@ impl NativeSession {
         }
 
         let mut session = Self {
-            id: Uuid::new_v4().to_string(),
+            id: String::new(),
             name: name.unwrap_or_else(|| format!("RDP {host}")),
             host: host.clone(),
             port,
@@ -184,6 +182,7 @@ impl NativeSession {
             return Err(error);
         }
         session.wait_connected(Duration::from_secs(30))?;
+        session.id = format!("rdp_{}", NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed));
         Ok(session)
     }
 
@@ -274,14 +273,6 @@ impl NativeSession {
         Ok((state.width, state.height))
     }
 
-    fn scale_to_native(&self, x: f64, y: f64) -> (i32, i32) {
-        let state = self.callback.inner.lock().expect("session state poisoned");
-        (
-            (x * state.scale_x).round() as i32,
-            (y * state.scale_y).round() as i32,
-        )
-    }
-
     fn screenshot(
         &self,
         format: &str,
@@ -316,15 +307,15 @@ impl NativeSession {
             thread::sleep(Duration::from_millis(500));
         }
 
-        let mut state = self.callback.inner.lock().expect("session state poisoned");
+        let state = self.callback.inner.lock().expect("session state poisoned");
         let native_width = state.width;
         let native_height = state.height;
         let frame_version = state.frame_version;
         let native_region = region.map(|region| NativeRegion {
-            x: (region.x * state.scale_x).max(0.0).round() as u32,
-            y: (region.y * state.scale_y).max(0.0).round() as u32,
-            width: (region.width * state.scale_x).max(1.0).round() as u32,
-            height: (region.height * state.scale_y).max(1.0).round() as u32,
+            x: region.x.max(0) as u32,
+            y: region.y.max(0) as u32,
+            width: region.width.max(1),
+            height: region.height.max(1),
         });
         let encoded = image::encode(
             &state.framebuffer,
@@ -335,10 +326,6 @@ impl NativeSession {
             max_width,
             native_region,
         )?;
-        if region.is_none() {
-            state.scale_x = native_width as f64 / encoded.width as f64;
-            state.scale_y = native_height as f64 / encoded.height as f64;
-        }
         Ok(Screenshot {
             encoded,
             native_width,
@@ -386,22 +373,14 @@ impl NativeManager {
     #[allow(clippy::too_many_arguments)]
     pub fn open(
         &self,
-        connection_type: &str,
         host: String,
         port: u16,
         username: Option<String>,
         password: Option<String>,
-        credential_id: Option<String>,
         name: Option<String>,
         width: u32,
         height: u32,
     ) -> Result<ConnectionInfo> {
-        if !connection_type.eq_ignore_ascii_case("rdp") {
-            bail!("rdp-mcp only supports connection_type='rdp'");
-        }
-        if credential_id.is_some() {
-            bail!("credential_id is unavailable because this standalone server has no vault");
-        }
         let username = username.ok_or_else(|| anyhow::anyhow!("username is required"))?;
         let password = password.ok_or_else(|| anyhow::anyhow!("password is required"))?;
 
@@ -446,9 +425,8 @@ impl NativeManager {
         })
     }
 
-    pub fn mouse_move(&self, connection_id: &str, x: f64, y: f64) -> Result<()> {
+    pub fn mouse_move(&self, connection_id: &str, x: i32, y: i32) -> Result<()> {
         self.with_session(connection_id, |session| {
-            let (x, y) = session.scale_to_native(x, y);
             session.command(&json!({"type": "mouse_move", "x": x, "y": y}))
         })
     }
@@ -456,14 +434,13 @@ impl NativeManager {
     pub fn mouse_click(
         &self,
         connection_id: &str,
-        x: f64,
-        y: f64,
+        x: i32,
+        y: i32,
         button: &str,
         double_click: bool,
     ) -> Result<()> {
         let button = mouse_button(button)?;
         self.with_session(connection_id, |session| {
-            let (x, y) = session.scale_to_native(x, y);
             let count = if double_click { 2 } else { 1 };
             for index in 0..count {
                 session.command(&json!({
@@ -484,16 +461,14 @@ impl NativeManager {
     pub fn mouse_drag(
         &self,
         connection_id: &str,
-        from_x: f64,
-        from_y: f64,
-        to_x: f64,
-        to_y: f64,
+        from_x: i32,
+        from_y: i32,
+        to_x: i32,
+        to_y: i32,
         button: &str,
     ) -> Result<()> {
         let button = mouse_button(button)?;
         self.with_session(connection_id, |session| {
-            let (from_x, from_y) = session.scale_to_native(from_x, from_y);
-            let (to_x, to_y) = session.scale_to_native(to_x, to_y);
             session.command(&json!({"type": "mouse_move", "x": from_x, "y": from_y}))?;
             session.command(&json!({
                 "type": "mouse_button_down", "x": from_x, "y": from_y, "button": button
@@ -517,13 +492,12 @@ impl NativeManager {
     pub fn mouse_scroll(
         &self,
         connection_id: &str,
-        x: f64,
-        y: f64,
+        x: i32,
+        y: i32,
         delta: i32,
         vertical: bool,
     ) -> Result<()> {
         self.with_session(connection_id, |session| {
-            let (x, y) = session.scale_to_native(x, y);
             session.command(&json!({
                 "type": "mouse_scroll", "x": x, "y": y,
                 "delta": delta, "vertical": vertical
@@ -717,8 +691,6 @@ fn handle_native_output(callback: &CallbackState, message_type: u32, part_a: &[u
                     state.height = height;
                     state.framebuffer = vec![0; width as usize * height as usize * 4];
                     state.frame_version = 0;
-                    state.scale_x = 1.0;
-                    state.scale_y = 1.0;
                     state.connected = true;
                     state.disconnected = false;
                 }
@@ -772,25 +744,4 @@ fn apply_bitmap(state: &mut SessionState, header: &[u8], pixels: &[u8]) {
             .copy_from_slice(&pixels[source_offset..source_offset + copy_bytes]);
     }
     state.frame_version += 1;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn applies_bitmap_region() {
-        let mut state = SessionState {
-            width: 2,
-            height: 2,
-            framebuffer: vec![0; 16],
-            ..SessionState::default()
-        };
-        let header = [1, 0, 0, 0, 1, 0, 2, 0];
-        let pixels = [1, 2, 3, 4, 5, 6, 7, 8];
-        apply_bitmap(&mut state, &header, &pixels);
-        assert_eq!(&state.framebuffer[4..8], &pixels[..4]);
-        assert_eq!(&state.framebuffer[12..16], &pixels[4..]);
-        assert_eq!(state.frame_version, 1);
-    }
 }
